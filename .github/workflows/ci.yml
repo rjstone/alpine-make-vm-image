@@ -9,6 +9,9 @@ jobs:
   build-alpine:
     name: Build DO Droplet image
     runs-on: ubuntu-latest
+    permissions:
+      # Needed by the publish step to create/update the rolling release.
+      contents: write
     steps:
       - uses: actions/checkout@v6
 
@@ -112,3 +115,40 @@ jobs:
           retention-days: 30
           # Already bzip2'd; re-deflating it in the artifact zip only burns time.
           compression-level: 0
+
+      # Workflow artifacts need an authenticated API call to download, so
+      # DigitalOcean cannot import from one. A release asset is public and,
+      # unlike the artifact, is a plain file rather than a zip wrapper.
+      #
+      # This is a ROLLING release: the tag is reused so the download URL is
+      # stable and can be pasted into DO once and left alone. The tradeoff is
+      # that there is no history -- each build replaces the previous image.
+      #
+      # Only publishes for pushes to the branch, never for pull requests, which
+      # would otherwise let a PR overwrite the published image.
+      - name: Publish rolling release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: image-latest
+        run: |
+          set -eu
+          # Name the asset with the build date so a downloaded file is
+          # identifiable, and publish a stable copy under a fixed name.
+          cp alpine-do.qcow2.bz2 "${IMAGE_NAME}.qcow2.bz2"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "Automated build from ${GITHUB_SHA}."
+          else
+            gh release create "$TAG" \
+                --title 'Latest DO Droplet image' \
+                --notes "Automated build from ${GITHUB_SHA}." \
+                --prerelease
+          fi
+
+          # --clobber replaces the assets from the previous build.
+          gh release upload "$TAG" \
+              alpine-do.qcow2.bz2 "${IMAGE_NAME}.qcow2.bz2" --clobber
+
+          echo "Stable import URL:"
+          echo "  https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/alpine-do.qcow2.bz2"

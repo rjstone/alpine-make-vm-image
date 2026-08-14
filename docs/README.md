@@ -11,6 +11,31 @@ and reviewable) or a plan document.
 | `do-droplet-plan.md` | — | implementation plan for this work |
 | `user-data-docker.yaml` | — | cloud-init user-data to install Docker + Compose on first boot |
 
+## Getting the image onto DigitalOcean
+
+Every successful build on `do-droplet-image` publishes the bzip2'd image to a rolling
+prerelease tagged `image-latest`, so this URL is stable and always points at the most recent
+build:
+
+    https://github.com/rjstone/alpine-make-vm-image/releases/download/image-latest/alpine-do.qcow2.bz2
+
+Import it with DO's control panel ("Custom Images" -> "Import via URL") or:
+
+```sh
+doctl compute image create "Alpine DO Droplet" \
+    --image-url "https://github.com/rjstone/alpine-make-vm-image/releases/download/image-latest/alpine-do.qcow2.bz2" \
+    --image-distribution Unknown \
+    --region nyc1
+```
+
+DigitalOcean decompresses gzip and bzip2 images on import, so the `.bz2` is uploaded as-is.
+The release also carries a date-stamped copy of the same file (`alpine-do-YYYY-MM-DD.qcow2.bz2`)
+so a downloaded image is identifiable, but only the fixed name is a stable URL — the rolling
+tag keeps no history, and each build replaces the previous image.
+
+The same file is attached to each run as a workflow artifact, but note that artifact downloads
+require an authenticated GitHub API call, so DigitalOcean cannot import from an artifact URL.
+
 ## Other references
 
 - <https://cloud-init.io/> — upstream cloud-init project.
