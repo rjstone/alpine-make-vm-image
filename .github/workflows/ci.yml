@@ -212,6 +212,16 @@ jobs:
           if [ -z "$image_id" ]; then
             echo "::error::image create failed" >&2
             echo "$created" >&2
+            # Distinguish the two ways this commonly fails, because the API's
+            # own message ("Your request is not allowed") does not.
+            case "$(echo "$created" | jq -r '.id // empty')" in
+              forbidden)
+                echo "::error::403: the token authenticated but is not permitted to create images. If DO_IMG_UPLOAD_PAT uses custom scopes it needs image:create, image:read and image:delete." >&2
+                ;;
+              unauthorized)
+                echo "::error::401: DO_IMG_UPLOAD_PAT is invalid, revoked or expired." >&2
+                ;;
+            esac
             exit 1
           fi
           echo "Created image id ${image_id}; waiting for import to finish"
