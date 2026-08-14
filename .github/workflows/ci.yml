@@ -152,3 +152,107 @@ jobs:
 
           echo "Stable import URL:"
           echo "  https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/alpine-do.qcow2.bz2"
+
+      # Hand the release URL to DigitalOcean so the image is ready to use
+      # without a manual import. Runs after the release step because DO fetches
+      # the URL server-side, so the asset must already be published.
+      #
+      # NOTE: the API cannot replace the contents of an existing custom image --
+      # PUT /v2/images/{id} only edits name/description/distribution. "Keep one
+      # image, same name" is therefore implemented as create-new, wait for it to
+      # import, then delete the older images that share the name. Creating first
+      # and deleting last means a failed import leaves the previous image intact.
+      - name: Upload image to DigitalOcean
+        if: github.event_name == 'push'
+        env:
+          DO_TOKEN: ${{ secrets.DO_IMG_UPLOAD_PAT }}
+          DO_REGION: ${{ vars.DO_IMG_UPLOAD_REGION }}
+          DO_IMAGE_NAME: alpine-do-droplet-latest
+          TAG: image-latest
+        run: |
+          set -eu
+
+          if [ -z "${DO_TOKEN:-}" ]; then
+            echo "::error::secret DO_IMG_UPLOAD_PAT is not set" >&2; exit 1
+          fi
+          if [ -z "${DO_REGION:-}" ]; then
+            echo "::error::repository variable DO_IMG_UPLOAD_REGION is not set" >&2; exit 1
+          fi
+
+          # Branch explicitly rather than interpolating an optional -d argument:
+          # an unquoted ${3:+-d "$3"} would word-split a JSON body containing
+          # spaces across several curl arguments.
+          api() {  # api <method> <path> [json-body]
+            if [ $# -ge 3 ]; then
+              curl -sS -X "$1" \
+                  -H 'Content-Type: application/json' \
+                  -H "Authorization: Bearer ${DO_TOKEN}" \
+                  -d "$3" \
+                  "https://api.digitalocean.com/v2$2"
+            else
+              curl -sS -X "$1" \
+                  -H 'Content-Type: application/json' \
+                  -H "Authorization: Bearer ${DO_TOKEN}" \
+                  "https://api.digitalocean.com/v2$2"
+            fi
+          }
+
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/alpine-do.qcow2.bz2"
+          body=$(jq -nc \
+              --arg name "$DO_IMAGE_NAME" \
+              --arg url "$url" \
+              --arg region "$DO_REGION" \
+              --arg desc "Alpine DO Droplet image, built from ${GITHUB_SHA}" \
+              '{name: $name, url: $url, region: $region, distribution: "Unknown",
+                description: $desc, tags: ["alpine", "docker", "ci-built"]}')
+
+          echo "Creating custom image in ${DO_REGION} from ${url}"
+          created=$(api POST /images "$body")
+          image_id=$(echo "$created" | jq -r '.image.id // empty')
+          if [ -z "$image_id" ]; then
+            echo "::error::image create failed" >&2
+            echo "$created" >&2
+            exit 1
+          fi
+          echo "Created image id ${image_id}; waiting for import to finish"
+
+          # Import is asynchronous. Poll until the status settles; without this a
+          # green build would say nothing about whether DO accepted the image.
+          # status is one of NEW, available, pending, deleted, retired.
+          status=
+          for _ in $(seq 60); do        # 60 x 15s = 15 minutes
+            img=$(api GET "/images/${image_id}")
+            status=$(echo "$img" | jq -r '.image.status // "unknown"')
+            case "$status" in
+              available)
+                echo "Image ${image_id} is available"
+                break
+                ;;
+              NEW|pending)
+                echo "  status=${status}, still importing..."
+                sleep 15
+                ;;
+              *)
+                echo "::error::import ended with status=${status}" >&2
+                echo "$img" | jq -r '.image.error_message // "no error_message"' >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          if [ "$status" != available ]; then
+            echo "::error::timed out after 15m waiting for import (status=${status})" >&2
+            exit 1
+          fi
+
+          # Only now remove older images with the same name, so a failed import
+          # never leaves you with nothing usable.
+          old_ids=$(api GET '/images?private=true&per_page=200' \
+              | jq -r --arg n "$DO_IMAGE_NAME" --argjson keep "$image_id" \
+                  '.images[] | select(.name == $n and .id != $keep) | .id')
+          for old in $old_ids; do
+            echo "Deleting superseded image ${old}"
+            api DELETE "/images/${old}" >/dev/null
+          done
+
+          echo "DigitalOcean image '${DO_IMAGE_NAME}' (id ${image_id}) ready in ${DO_REGION}"

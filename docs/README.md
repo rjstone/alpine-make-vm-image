@@ -36,6 +36,32 @@ tag keeps no history, and each build replaces the previous image.
 The same file is attached to each run as a workflow artifact, but note that artifact downloads
 require an authenticated GitHub API call, so DigitalOcean cannot import from an artifact URL.
 
+### Automatic upload to your DigitalOcean account
+
+CI also pushes each build straight into the account, so no manual import is needed. It needs
+two repository settings:
+
+| Setting | Kind | Value |
+|---|---|---|
+| `DO_IMG_UPLOAD_PAT` | secret | DigitalOcean personal access token (`dop_v1_...`) |
+| `DO_IMG_UPLOAD_REGION` | variable | Region slug the image is created in, e.g. `nyc3` |
+
+If the token uses **custom scopes** rather than full access, it needs all three of
+`image:create`, `image:read` and `image:delete` — read for polling the import, delete for
+removing the superseded image. A token missing `image:delete` still uploads fine but leaves
+old images behind, accumulating storage charges.
+
+The DO API cannot replace the contents of an existing custom image (`PUT /v2/images/{id}`
+only edits name, description and distribution), so "one image, always current" is implemented
+as: create the new image, poll until its status reaches `available`, then delete the older
+images sharing the name `alpine-do-droplet-latest`. Creating first and deleting last means a
+failed import leaves the previous image usable. Import status is one of `NEW`, `available`,
+`pending`, `deleted` or `retired`; anything other than `available` fails the job and prints
+the API's `error_message`.
+
+The image is created in one region only. To use it elsewhere, transfer it with
+`POST /v2/images/{id}/actions` and `{"type": "transfer", "region": "..."}`.
+
 ## Other references
 
 - <https://cloud-init.io/> — upstream cloud-init project.
