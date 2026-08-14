@@ -44,7 +44,7 @@ two repository settings:
 | Setting | Kind | Value |
 |---|---|---|
 | `DO_IMG_UPLOAD_PAT` | secret | DigitalOcean personal access token (`dop_v1_...`) |
-| `DO_IMG_UPLOAD_REGION` | variable | Region slug the image is created in, e.g. `nyc3` |
+| `DO_IMG_UPLOAD_REGION` | variable | Region slug, or a space-separated list, e.g. `nyc3 sfo3` |
 
 If the token uses **custom scopes** rather than full access, it needs all three of
 `image:create`, `image:read` and `image:delete` — read for polling the import, delete for
@@ -69,8 +69,22 @@ failed import leaves the previous image usable. Import status is one of `NEW`, `
 `pending`, `deleted` or `retired`; anything other than `available` fails the job and prints
 the API's `error_message`.
 
-The image is created in one region only. To use it elsewhere, transfer it with
-`POST /v2/images/{id}/actions` and `{"type": "transfer", "region": "..."}`.
+### Multiple regions
+
+`DO_IMG_UPLOAD_REGION` accepts a space-separated list. The image is created in the **first**
+region and then **transferred** to the rest with
+`POST /v2/images/{id}/actions` / `{"type": "transfer", "region": "..."}`, each transfer polled
+until its action reports `completed`.
+
+It is done this way, rather than creating the image once per region, because a DigitalOcean
+custom image is a single object with a `regions[]` array — one image, visible in several
+places. Creating it N times would produce N distinct images that happen to share a name, and
+the cleanup step (which matches on name) would then delete all but the newest. Transfers
+happen only after the initial import reaches `available`, since an image cannot be transferred
+before it exists.
+
+Note that the image consumes storage in every region it lives in, so a longer list costs
+proportionally more.
 
 ## Other references
 

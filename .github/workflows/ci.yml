@@ -179,6 +179,19 @@ jobs:
             echo "::error::repository variable DO_IMG_UPLOAD_REGION is not set" >&2; exit 1
           fi
 
+          # DO_IMG_UPLOAD_REGION may be a space-separated list, e.g. "nyc3 sfo3".
+          # The image is CREATED in the first region and TRANSFERRED to the rest
+          # rather than created once per region: a custom image is a single
+          # object with a regions[] array, so transferring keeps one image
+          # visible in several places. Creating it N times would instead make N
+          # separate images that all share a name, which the cleanup below
+          # (which matches on name) would then delete down to one.
+          # shellcheck disable=SC2086
+          set -- $DO_REGION
+          create_region=$1
+          shift
+          transfer_regions="$*"
+
           # Branch explicitly rather than interpolating an optional -d argument:
           # an unquoted ${3:+-d "$3"} would word-split a JSON body containing
           # spaces across several curl arguments.
@@ -201,7 +214,7 @@ jobs:
           body=$(jq -nc \
               --arg name "$DO_IMAGE_NAME" \
               --arg url "$url" \
-              --arg region "$DO_REGION" \
+              --arg region "$create_region" \
               --arg desc "Alpine DO Droplet image, built from ${GITHUB_SHA}" \
               '{name: $name, url: $url, region: $region, distribution: "Unknown",
                 description: $desc}')
@@ -211,7 +224,7 @@ jobs:
           # with full image scopes still gets a flat 403. Nothing needs them:
           # the cleanup below finds superseded images by name.
 
-          echo "Creating custom image in ${DO_REGION} from ${url}"
+          echo "Creating custom image in ${create_region} from ${url}"
           created=$(api POST /images "$body")
           image_id=$(echo "$created" | jq -r '.image.id // empty')
           if [ -z "$image_id" ]; then
@@ -260,6 +273,42 @@ jobs:
             exit 1
           fi
 
+          # Copy the finished image into any additional regions. This must wait
+          # for the import above: an image cannot be transferred until it is
+          # available.
+          for region in $transfer_regions; do
+            echo "Transferring image ${image_id} to ${region}"
+            action=$(api POST "/images/${image_id}/actions" \
+                "$(jq -nc --arg r "$region" '{type: "transfer", region: $r}')")
+            action_id=$(echo "$action" | jq -r '.action.id // empty')
+            if [ -z "$action_id" ]; then
+              echo "::error::transfer to ${region} was not accepted" >&2
+              echo "$action" >&2
+              exit 1
+            fi
+
+            # Action status is one of in-progress, completed, errored.
+            astatus=
+            for _ in $(seq 60); do    # 60 x 15s = 15 minutes per region
+              act=$(api GET "/images/${image_id}/actions/${action_id}")
+              astatus=$(echo "$act" | jq -r '.action.status // "unknown"')
+              case "$astatus" in
+                completed)   echo "  transferred to ${region}"; break ;;
+                in-progress) sleep 15 ;;
+                *)
+                  echo "::error::transfer to ${region} ended with status=${astatus}" >&2
+                  echo "$act" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+
+            if [ "$astatus" != completed ]; then
+              echo "::error::timed out after 15m transferring to ${region} (status=${astatus})" >&2
+              exit 1
+            fi
+          done
+
           # Only now remove older images with the same name, so a failed import
           # never leaves you with nothing usable.
           old_ids=$(api GET '/images?private=true&per_page=200' \
@@ -270,4 +319,5 @@ jobs:
             api DELETE "/images/${old}" >/dev/null
           done
 
-          echo "DigitalOcean image '${DO_IMAGE_NAME}' (id ${image_id}) ready in ${DO_REGION}"
+          regions=$(api GET "/images/${image_id}" | jq -r '.image.regions | join(", ")')
+          echo "DigitalOcean image '${DO_IMAGE_NAME}' (id ${image_id}) ready in: ${regions}"
