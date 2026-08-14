@@ -116,6 +116,12 @@ From the Alpine `cloud-init` README:
 - `growpart`/`resizefs` need `cloud-utils-growpart`, `e2fsprogs-extra`, `parted`, `gptfdisk`
   (`sgdisk`, for GPT) and `util-linux-misc` (`blockdev`, `lsblk`).
 - Prefer `eudev` over mdev; upstream cloud-init is only tested against udev.
+- **`bash`** is required, despite nothing in the image itself needing it. DigitalOcean's
+  vendor-data writes scripts into `/var/lib/cloud/scripts/per-instance/` that are written for
+  Debian/Ubuntu. Without bash, `machine_id.sh` fails to exec (`execve` returns ENOENT when the
+  shebang's interpreter is missing, which reads confusingly as "No such file or directory" for
+  a file that plainly exists), `runparts` raises, and cloud-init marks `modules-final` as
+  FAILED — so `cloud-init status` reports an error even though every module that matters ran.
 
 ### Why the repositories file is pinned to v3.22
 

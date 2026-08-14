@@ -71,6 +71,11 @@ jobs:
               '! [ -L /mnt/etc/runlevels/default/dhcpcd ]'
           check 'timezone set to UTC' \
               '[ -e /mnt/etc/localtime ]'
+          # DigitalOcean's vendor-data drops scripts written for Debian/Ubuntu
+          # into /var/lib/cloud/scripts/. Without bash, one of them fails to
+          # exec and cloud-init reports modules-final as FAILED.
+          check 'bash present for DO vendor-data scripts' \
+              '[ -x /mnt/bin/bash ]'
           check 'sshd_config has UsePAM yes' \
               'grep -q "^UsePAM yes" /mnt/etc/ssh/sshd_config'
           check 'no baked-in SSH host keys' \
