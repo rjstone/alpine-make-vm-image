@@ -1,4 +1,4 @@
-= Make Alpine Linux VM Image
+= Make Alpine Linux VPS Image for Digital Ocean Droplets
 :script-name: alpine-make-vm-image
 :script-sha1: 33b338dc0d2ce67a8dd4f1701862f051aed565f1
 :gh-name: alpinelinux/{script-name}
@@ -8,123 +8,15 @@ ifdef::env-github[]
 image:https://github.com/{gh-name}/workflows/CI/badge.svg["Build Status", link="https://github.com/{gh-name}/actions"]
 endif::env-github[]
 
-This project provides a script for making customized https://alpinelinux.org/[Alpine Linux] disk images for x86_64 and aarch64 footnote:[Supported since Alpine Linux v3.19. See <<aarch64-old>>.] virtual machines.
-You can choose between BIOS mode (using https://syslinux.org/[Syslinux], only for x86_64) and UEFI mode (using Linux https://docs.kernel.org/admin-guide/efi-stub.html[EFI stub]).
-It’s quite simple (400 LoC of shell), fast (~32 seconds on GitHub Actions), requires minimum dependencies (QEMU and filesystem tools).
+This project provides a script for making customized https://alpinelinux.org/[Alpine Linux] VPS qcow2 images for Digital Ocean "Droplets" (their brand name for their VPS service instances). They are built for BIOS boot using https://syslinux.org/[Syslinux], x86_64, install `cloud-init`, `gcompat`, and otherwise only the bare minimum stuff needed.
 
-TIP: Don’t need VM, just wanna chroot into Alpine Linux?
-     Try https://github.com/alpinelinux/alpine-chroot-install[alpine-chroot-install]!
-     Or do you want to create a custom rootfs?
-     Then https://github.com/alpinelinux/alpine-make-rootfs[alpine-make-rootfs] is for you!
+This is a fork of the alpine-make-vm-image which has a different default branch for the DO image build and this different readme, but is otherwise the same as `
 
+== Documentatiom for {script-name}
 
-== Requirements
+See the `main` branch for the documentstiom om the base image build script.
 
-* Linux system with common userland (Busybox or GNU coreutils)
-* POSIX-sh compatible shell (e.g. Busybox ash, dash, Bash, ZSH)
-* `qemu-img` and `qemu-nbd` tools
-* `rsync` (needed only for `--fs-skel-dir`)
-* `sfdisk` (needed only for `--partition`, `--boot-mode UEFI` and non-x86 architectures)
-* `mdev` or `udevadm` (needed only for `--partition`, `--boot-mode UEFI` and non-x86 architectures if device hotplug doesn’t work)
-* `e2fsprogs` (for ext4), `btrfs-progs` (for Btrfs), or `xfsprogs` (for XFS)
-* `dosfstools` (needed only for `--boot-mode UEFI` and non-x86 architectures)
-
-All dependencies except the first two are automatically installed by the script when running on Alpine Linux.
-
-
-== Usage
-
-Read documentation in link:{script-name}[{script-name}].
-See link:.github/workflows/ci.yml[] for GitHub Actions example.
-
-You can copy link:{script-name}[{script-name}] into your repository or download it on demand, e.g.:
-
-[source, sh, subs="+attributes"]
-wget https://raw.githubusercontent.com/{gh-name}/v{version}/{script-name} \
-    && echo '{script-sha1}  {script-name}' | sha1sum -c \
-    || exit 1
-
-Or, if you are on Alpine Linux, you can simply install the https://pkgs.alpinelinux.org/packages?name={script-name}[{script-name}] package.
-
-
-== Howtos
-
-=== Create images for aarch64 on x86_64 host
-
-All you need to do is install the https://www.qemu.org/docs/master/user/main.html[QEMU User space emulator] for aarch64 and register it in https://docs.kernel.org/admin-guide/binfmt-misc.html[binfmt_misc] as the interpreter for aarch64 binaries.
-
-On Alpine Linux::
-+
-[source, sh]
-apk add qemu-aarch64 qemu-openrc
-rc-service qemu-binfmt start
-
-On Debian/Ubuntu::
-+
-[source, sh]
-apt-get install -y --no-install-recommends binfmt-support qemu-user-static
-update-binfmts --enable
-
-On Fedora::
-+
-[source, sh]
-dnf install qemu-user-static
-
-On GitHub Actions::
-+
-[source, yaml]
-----
-- name: Install qemu-aarch64 and register in binfmt
-  uses: jirutka/setup-alpine@v1
-  with:
-    arch: aarch64
-----
-+
-See link:.github/workflows/ci.yml[] for a complete example.
-
-After that, run {script-name} with the option `--arch aarch64`.
-
-
-[[aarch64-old]]
-=== Create aarch64 image with Alpine v3.18 or older
-
-The Linux kernel (_linux-virt_, _linux-lts_ or _linux-edge_ package) in Alpine v3.18 and earlier doesn’t have https://cateee.net/lkddb/web-lkddb/EFI_ZBOOT.html[EFI_ZBOOT] enabled, so EFI stub cannot load a compressed vmlinuz.
-We backported it to v3.18, but then we had to revert it due to a problem with Grub (see https://gitlab.alpinelinux.org/alpine/aports/-/issues/15263[alpine/aports#15263]).
-
-If you want to build an image with an older branch of Alpine Linux, you can, but you must install the kernel from the v3.19 branch (or newer).
-This is relatively safe because the kernel package doesn’t have any dynamic dependencies.
-
-. Create a `repositories` file with a pinned main repository from v3.19, e.g.:
-+
-[source]
-----
-@v319 https://dl-cdn.alpinelinux.org/alpine/v3.19/main
-https://dl-cdn.alpinelinux.org/alpine/v3.18/main
-https://dl-cdn.alpinelinux.org/alpine/v3.18/community
-----
-
-. Run {script-name} with the options `--repositories-file ./repositories` and `--packages linux-virt@v319` (or `linux-lts@v319` if you use `--kernel-flavor lts`).
-
-This will first install _linux-virt_ from v3.18, but in the later step it will reinstall it from the v3.19 branch.
-
-
-=== Create image for VMware (ESXi)
-
-VMware and disk images (virtual disks) is one big mess.
-You can find that VMware uses the VMDK format, but the problem is that this is not a single format.
-Actually it has many subformats with very different structure and various (in)compatibility with VMware hypervisors.
-
-When I’ve created a disk image using `qemu-img create -f vmdk` or converted Qcow2 to VMDK using `qemu-img convert -O vmdk`, vSphere client loaded this image without any problem, but the data was corrupted.
-Eventually I found in some old documentation that ESXi does not support “sparse” disks…
-
-So after many trials I found out that the least bad and functional solution is to create Qcow2 image and then convert it to VMDK using:
-
-[source, sh]
-qemu-img convert -f qcow2 -O vmdk -o adapter_type=lsilogic,subformat=monolithicFlat alpine.qcow2 alpine.vmdk
-
-Unfortunately, this creates a “thick” image, i.e. its size equals the “provisioned space”, not actually used space as in Qcow2.
-However, you can compress it with gzip to avoid transferring multiple gigabytes of zeros over network.
-
+See the [do-image](do-image) directory for information anout the DO-specific image in this branch.
 
 == License
 
