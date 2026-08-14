@@ -53,7 +53,12 @@ old images behind, accumulating storage charges.
 
 If the upload step fails, the HTTP status tells you which half is wrong:
 
-- `{"id":"unauthorized"}` (401) — the token is invalid, revoked or expired.
+- `{"id":"Unauthorized","message":"Unable to authenticate you"}` (401) — the token is invalid,
+  revoked or expired, or the secret picked up a trailing newline when it was pasted (the
+  workflow strips whitespace from the token to rule that out). Note DO capitalises the `id`
+  here even though its own docs example shows it lowercase, so match case-insensitively.
+  Regenerating or editing a token in the DO control panel issues a NEW token string and
+  invalidates the old one — the `DO_IMG_UPLOAD_PAT` secret has to be updated to match.
 - `{"id":"forbidden","message":"Your request is not allowed"}` (403) — the token
   authenticated but is not permitted to make that call. Check `image:create` first, but note
   that the whole request is judged, not just the endpoint: setting `tags` in the create body

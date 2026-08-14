@@ -180,6 +180,10 @@ jobs:
           if [ -z "${DO_TOKEN:-}" ]; then
             echo "::error::secret DO_IMG_UPLOAD_PAT is not set" >&2; exit 1
           fi
+          # A trailing newline or stray space pasted into the secret makes the
+          # Authorization header malformed, which the API reports as a plain 401
+          # and is otherwise invisible. A DO token never contains whitespace.
+          DO_TOKEN=$(printf '%s' "$DO_TOKEN" | tr -d '[:space:]')
           if [ -z "${DO_REGION:-}" ]; then
             echo "::error::repository variable DO_IMG_UPLOAD_REGION is not set" >&2; exit 1
           fi
@@ -237,7 +241,7 @@ jobs:
             echo "$created" >&2
             # Distinguish the two ways this commonly fails, because the API's
             # own message ("Your request is not allowed") does not.
-            case "$(echo "$created" | jq -r '.id // empty')" in
+            case "$(echo "$created" | jq -r '.id // empty' | tr '[:upper:]' '[:lower:]')" in
               forbidden)
                 echo "::error::403: the token authenticated but is not permitted to create images. If DO_IMG_UPLOAD_PAT uses custom scopes it needs image:create, image:read and image:delete." >&2
                 ;;
