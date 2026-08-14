@@ -16,7 +16,7 @@ This is a fork of the alpine-make-vm-image which has a different default branch 
 
 See the `main` branch for the documentstiom om the base image build script.
 
-See the [do-image](do-image) directory for information anout the DO-specific image in this branch.
+See the [docs](docs) directory and the [do-image](do-image) directory for information anout the DO-specific image in this branch.
 
 == License
 
