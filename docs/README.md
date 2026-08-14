@@ -42,6 +42,22 @@ From the Alpine `cloud-init` README:
   (`sgdisk`, for GPT) and `util-linux-misc` (`blockdev`, `lsblk`).
 - Prefer `eudev` over mdev; upstream cloud-init is only tested against udev.
 
+### Why the repositories file is pinned to v3.22
+
+`do-droplet/repositories` names `v3.22` explicitly rather than `latest-stable`, and it must
+stay in step with the `jirutka/setup-alpine` branch pin in `.github/workflows/ci.yml`.
+
+`alpine-make-vm-image` installs into the image using the **host's** apk, so
+`/lib/apk/db/installed` ends up in the host apk-tools' format. v3.22 ships apk-tools 2.14.10,
+but `latest-stable` has moved to v3.24 with apk-tools 3.0.7 and a new, incompatible database
+format. Building with one and installing the other produced an image whose own `apk` could not
+read its own database — every command failed with:
+
+    ERROR: Unable to read database: file format is invalid or inconsistent
+
+The Droplet booted fine; only package management was broken. If you bump one pin, bump both,
+and check the `host apk` / `image apk` lines that CI now prints.
+
 ### Where we deviate from the vendored README
 
 `README.Alpine`'s datasource table tells you to install `dhclient` for the DigitalOcean-style

@@ -77,6 +77,16 @@ jobs:
           check 'root filesystem is ext4' \
               'blkid -o value -s TYPE /dev/nbd0p1 | grep -qx ext4'
 
+          # The image is installed by the HOST's apk, so the database on disk is
+          # written in the host apk-tools' format. If the image itself pulls a
+          # different apk-tools major version, every apk command on the booted
+          # Droplet dies with "file format is invalid or inconsistent". Same
+          # arch, so we can just run the image's own apk against its own db.
+          echo "host apk:  $(apk --version)"
+          echo "image apk: $(chroot /mnt /sbin/apk --version 2>&1 || true)"
+          check 'image apk can read its own database' \
+              'chroot /mnt /sbin/apk info -e busybox >/dev/null 2>&1'
+
           exit $fail
         shell: alpine.sh --root {0}
 
