@@ -2,10 +2,12 @@
 :script-name: alpine-make-vm-image
 :script-sha1: 33b338dc0d2ce67a8dd4f1701862f051aed565f1
 :gh-name: alpinelinux/{script-name}
+:fork-name: rjstone/{script-name}
+:fork-branch: do-droplet-image
 :version: 0.13.4
 
 ifdef::env-github[]
-image:https://github.com/{gh-name}/workflows/CI/badge.svg["Build Status", link="https://github.com/{gh-name}/actions"]
+image:https://github.com/{fork-name}/actions/workflows/ci.yml/badge.svg?branch={fork-branch}["Build Status", link="https://github.com/{fork-name}/actions/workflows/ci.yml?query=branch%3A{fork-branch}"]
 endif::env-github[]
 
 This project provides a script for making customized https://alpinelinux.org/[Alpine Linux] VPS qcow2 images for Digital Ocean "Droplets" (their brand name for their VPS service instances). They are built for BIOS boot using https://syslinux.org/[Syslinux], x86_64, install `cloud-init`, `gcompat`, and otherwise only the bare minimum stuff needed.
