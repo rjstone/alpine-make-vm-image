@@ -39,7 +39,8 @@ jobs:
       - name: Verify DigitalOcean image requirements
         run: |
           set -eu
-          apk add --no-progress qemu-img e2fsprogs-extra
+          # blkid: busybox's applet does not support -o/-s, so use util-linux's.
+          apk add --no-progress qemu-img e2fsprogs-extra blkid
           modprobe nbd max_part=16 2>/dev/null || true
           qemu-nbd --connect=/dev/nbd0 alpine-do-$(date +%Y-%m-%d).qcow2
           trap 'umount /mnt 2>/dev/null; qemu-nbd --disconnect /dev/nbd0' EXIT
@@ -47,15 +48,26 @@ jobs:
           for _ in $(seq 30); do [ -e /dev/nbd0p1 ] && break; sleep 1; done
           mount /dev/nbd0p1 /mnt
 
+          echo '--- runlevel entries in the image ---'
+          find /mnt/etc/runlevels -mindepth 2 | sort
+          echo '-------------------------------------'
+
           fail=0
+          # Runlevel entries are symlinks whose targets are absolute paths into the
+          # image, so they dangle when read from outside it. Test the link itself
+          # with -L; do not use ls or -e, which follow the link and report missing.
           check() { if eval "$2"; then echo "ok: $1"; else echo "FAIL: $1"; fail=1; fi; }
 
           check 'ConfigDrive precedes NoCloud in datasource_list' \
               'grep -qE "^datasource_list:.*ConfigDrive" /mnt/etc/cloud/cloud.cfg.d/01-datasource.cfg'
           check 'cloud-init services registered by setup-cloud-init' \
-              'ls /mnt/etc/runlevels/*/cloud-init-local >/dev/null 2>&1'
+              'find /mnt/etc/runlevels -name "cloud-init-local" | grep -q .'
           check 'sshd enabled at boot' \
-              'ls /mnt/etc/runlevels/default/sshd >/dev/null 2>&1'
+              '[ -L /mnt/etc/runlevels/default/sshd ]'
+          check 'dhcpcd daemon NOT enabled at boot' \
+              '! [ -L /mnt/etc/runlevels/default/dhcpcd ]'
+          check 'timezone set to UTC' \
+              '[ -e /mnt/etc/localtime ]'
           check 'sshd_config has UsePAM yes' \
               'grep -q "^UsePAM yes" /mnt/etc/ssh/sshd_config'
           check 'no baked-in SSH host keys' \

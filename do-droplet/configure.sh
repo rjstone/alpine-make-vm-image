@@ -1,4 +1,5 @@
 #!/bin/sh
+set -eu
 
 _step_counter=0
 step() {
@@ -9,7 +10,11 @@ step() {
 uname -a
 
 step 'Set up timezone'
-setup-timezone -z UTC
+# Not setup-timezone: it shells out to "apk add tzdata", which fails inside the
+# build chroot with "Unable to read database: file format is invalid or
+# inconsistent". tzdata is already in the package list, so link it directly.
+cp /usr/share/zoneinfo/UTC /etc/localtime
+echo 'UTC' > /etc/timezone
 
 step 'Set up networking'
 # Fallback only; cloud-init rewrites this from the ConfigDrive network metadata.
