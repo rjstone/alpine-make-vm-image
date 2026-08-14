@@ -204,7 +204,12 @@ jobs:
               --arg region "$DO_REGION" \
               --arg desc "Alpine DO Droplet image, built from ${GITHUB_SHA}" \
               '{name: $name, url: $url, region: $region, distribution: "Unknown",
-                description: $desc, tags: ["alpine", "docker", "ci-built"]}')
+                description: $desc}')
+          # No "tags" here on purpose. Tags are a separate resource in DO's
+          # permission model, so including them makes the whole create request
+          # require tag:create/tag:read in addition to image:create -- a token
+          # with full image scopes still gets a flat 403. Nothing needs them:
+          # the cleanup below finds superseded images by name.
 
           echo "Creating custom image in ${DO_REGION} from ${url}"
           created=$(api POST /images "$body")

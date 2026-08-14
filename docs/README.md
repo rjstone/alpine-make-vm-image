@@ -55,8 +55,11 @@ If the upload step fails, the HTTP status tells you which half is wrong:
 
 - `{"id":"unauthorized"}` (401) — the token is invalid, revoked or expired.
 - `{"id":"forbidden","message":"Your request is not allowed"}` (403) — the token
-  authenticated but lacks the scope for that call. Almost always a custom-scoped token
-  without `image:create`. Less commonly, an account-level restriction on custom images.
+  authenticated but is not permitted to make that call. Check `image:create` first, but note
+  that the whole request is judged, not just the endpoint: setting `tags` in the create body
+  additionally requires tag scopes, so a token with full `image` scopes and no `tag` scopes
+  still gets a flat 403. That is why the create body here sets no tags. Failing all that, an
+  account-level restriction on custom images.
 
 The DO API cannot replace the contents of an existing custom image (`PUT /v2/images/{id}`
 only edits name, description and distribution), so "one image, always current" is implemented
