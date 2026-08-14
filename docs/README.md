@@ -40,3 +40,15 @@ From the Alpine `cloud-init` README:
 - `growpart`/`resizefs` need `cloud-utils-growpart`, `e2fsprogs-extra`, `parted`, `gptfdisk`
   (`sgdisk`, for GPT) and `util-linux-misc` (`blockdev`, `lsblk`).
 - Prefer `eudev` over mdev; upstream cloud-init is only tested against udev.
+
+### Where we deviate from the vendored README
+
+`README.Alpine`'s datasource table tells you to install `dhclient` for the DigitalOcean-style
+datasources that need an ephemeral DHCPv4 lease to reach the metadata server. That advice is
+stale: ISC dhcp is EOL and **no package provides a `dhclient` binary in v3.22** — `apk` fails
+with `dhclient (no such package)`. We use `dhcpcd` instead, which cloud-init has supported
+since 23.3 (v3.22 ships cloud-init 24.3.1, so this is fine).
+
+Only the plain `dhcpcd` package is installed, not `dhcpcd-openrc`: cloud-init invokes the
+binary directly for its ephemeral lease, and we do not want a second DHCP daemon competing
+with `/etc/network/interfaces` for `eth0`.

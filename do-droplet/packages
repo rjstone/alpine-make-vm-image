@@ -2,7 +2,7 @@ ca-certificates
 chrony
 cloud-init
 cloud-utils-growpart
-dhclient
+dhcpcd
 doas
 doas-sudo-shim
 e2fsprogs
