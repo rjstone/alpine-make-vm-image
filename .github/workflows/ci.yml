@@ -162,11 +162,7 @@ jobs:
       # without a manual import. Runs after the release step because DO fetches
       # the URL server-side, so the asset must already be published.
       #
-      # NOTE: the API cannot replace the contents of an existing custom image --
-      # PUT /v2/images/{id} only edits name/description/distribution. "Keep one
-      # image, same name" is therefore implemented as create-new, wait for it to
-      # import, then delete the older images that share the name. Creating first
-      # and deleting last means a failed import leaves the previous image intact.
+      # NOTE: the API cannot replace the contents of an existing custom image
       - name: Upload image to DigitalOcean
         if: github.event_name == 'push'
         env:
@@ -181,8 +177,7 @@ jobs:
             echo "::error::secret DO_IMG_UPLOAD_PAT is not set" >&2; exit 1
           fi
           # A trailing newline or stray space pasted into the secret makes the
-          # Authorization header malformed, which the API reports as a plain 401
-          # and is otherwise invisible. A DO token never contains whitespace.
+          # Authorization header malformed
           DO_TOKEN=$(printf '%s' "$DO_TOKEN" | tr -d '[:space:]')
           if [ -z "${DO_REGION:-}" ]; then
             echo "::error::repository variable DO_IMG_UPLOAD_REGION is not set" >&2; exit 1
@@ -190,11 +185,6 @@ jobs:
 
           # DO_IMG_UPLOAD_REGION may be a space-separated list, e.g. "nyc3 sfo3".
           # The image is CREATED in the first region and TRANSFERRED to the rest
-          # rather than created once per region: a custom image is a single
-          # object with a regions[] array, so transferring keeps one image
-          # visible in several places. Creating it N times would instead make N
-          # separate images that all share a name, which the cleanup below
-          # (which matches on name) would then delete down to one.
           # shellcheck disable=SC2086
           set -- $DO_REGION
           create_region=$1
@@ -229,9 +219,7 @@ jobs:
                 description: $desc}')
           # No "tags" here on purpose. Tags are a separate resource in DO's
           # permission model, so including them makes the whole create request
-          # require tag:create/tag:read in addition to image:create -- a token
-          # with full image scopes still gets a flat 403. Nothing needs them:
-          # the cleanup below finds superseded images by name.
+          # require tag:create/tag:read in addition to image:create
 
           echo "Creating custom image in ${create_region} from ${url}"
           created=$(api POST /images "$body")
