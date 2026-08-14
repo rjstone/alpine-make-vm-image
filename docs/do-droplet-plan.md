@@ -74,7 +74,11 @@ DO config files, which keeps `--fs-skel-dir` meaningful:
 | growpart / resizefs | `cloud-utils-growpart`, `e2fsprogs`, `e2fsprogs-extra`, `parted`, `gptfdisk` |
 | SSH (PAM variant, mandatory) | `openssh-server-pam` |
 | privilege escalation | `doas`, `doas-sudo-shim` |
+| glibc compat | `gcompat`, `libstdc++` |
 | time / TLS / misc | `chrony`, `ca-certificates`, `tzdata`, `logrotate`, `less` |
+
+`gcompat` + `libstdc++` go in the base so glibc-linked binaries (common in vendor-shipped
+container tooling and static-ish third-party releases) run without per-variant fixups.
 
 Carried over from `example/packages`: `chrony`, `doas`, `doas-sudo-shim`, `less`, `logrotate`.
 Dropped: `ssmtp` (no MTA needed), bare `openssh` (superseded by `openssh-server-pam`).
@@ -129,6 +133,8 @@ both — I'll fetch through it and strip the markdown escaping it adds.
 
 - `docs/digitalocean-custom-images-upload.md` — the DO upload/requirements page.
 - `docs/alpine-cloud-init-README.Alpine.txt` — the aports README.
+- `docs/do-droplet-plan.md` — already committed; re-sync it with this plan's final package
+  table (it predates the `gcompat`/`libstdc++` addition).
 - `docs/README.md` — short index naming each file, its source URL, and fetch date, plus a
   pointer to <https://cloud-init.io/> and the red-lichtie Alpine cloud-init repo. Worth a line
   in that index: red-lichtie's config uses `datasource_list: [ NoCloud, ConfigDrive ]`, which is

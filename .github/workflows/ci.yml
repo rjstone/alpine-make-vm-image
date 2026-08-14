@@ -4,75 +4,8 @@ on:
   - push
 
 jobs:
-  test-ubuntu:
-    name: Test on Ubuntu
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install qemu-utils
-        run: |
-          sudo apt-get update
-          sudo apt-get install qemu-utils
-
-      - uses: actions/checkout@v6
-
-      - name: Build image for x86_64 with BIOS mode and without GPT
-        run: |
-          sudo ./alpine-make-vm-image \
-              --image-format qcow2 \
-              --image-size 2G \
-              --repositories-file example/repositories \
-              --packages "$(cat example/packages)" \
-              --fs-skel-dir example/rootfs \
-              --fs-skel-chown root:root \
-              --script-chroot \
-              alpine-bios-$(date +%Y-%m-%d).qcow2 -- ./example/configure.sh
-
-      - name: Build image for x86_64 with BIOS mode and GPT
-        run: |
-          sudo ./alpine-make-vm-image \
-              --image-format raw \
-              --image-size 2G \
-              --partition \
-              --repositories-file example/repositories \
-              --packages "$(cat example/packages)" \
-              --fs-skel-dir example/rootfs \
-              --fs-skel-chown root:root \
-              --script-chroot \
-              alpine-bios-part-$(date +%Y-%m-%d).raw -- ./example/configure.sh
-
-      - name: Build image for x86_64 with UEFI mode
-        run: |
-          sudo ./alpine-make-vm-image \
-              --image-format qcow2 \
-              --image-size 2G \
-              --boot-mode UEFI \
-              --repositories-file example/repositories \
-              --packages "$(cat example/packages)" \
-              --fs-skel-dir example/rootfs \
-              --fs-skel-chown root:root \
-              --script-chroot \
-              alpine-uefi-$(date +%Y-%m-%d).qcow2 -- ./example/configure.sh
-
-      - name: Install qemu-aarch64 and register in binfmt
-        uses: jirutka/setup-alpine@v1
-        with:
-          arch: aarch64
-
-      - name: Build image for aarch64
-        run: |
-          sudo ./alpine-make-vm-image \
-              --arch aarch64 \
-              --image-format qcow2 \
-              --image-size 2G \
-              --repositories-file example/repositories \
-              --packages "$(cat example/packages) linux-virt@edge" \
-              --fs-skel-dir example/rootfs \
-              --fs-skel-chown root:root \
-              --script-chroot \
-              alpine-aarch64-$(date +%Y-%m-%d).qcow2 -- ./example/configure.sh
-
-  test-alpine:
-    name: Test on Alpine
+  build-alpine:
+    name: Build DO Droplet image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -86,50 +19,49 @@ jobs:
           # XXX: v3.23 doesn't work here, running package triggers results in "unshare: Invalid argument"
           branch: v3.22
 
-      - name: Build image for x86_64 with BIOS mode and without GPT
+      - name: Build DigitalOcean Droplet image
         run: |
           ./alpine-make-vm-image \
               --image-format qcow2 \
               --image-size 2G \
-              --repositories-file example/repositories \
-              --packages "$(cat example/packages)" \
-              --fs-skel-dir example/rootfs \
+              --partition \
+              --serial-console \
+              --repositories-file do-droplet/repositories \
+              --packages "$(cat do-droplet/packages)" \
+              --fs-skel-dir do-droplet/rootfs \
               --fs-skel-chown root:root \
               --script-chroot \
-              alpine-bios-$(date +%Y-%m-%d).qcow2 -- ./example/configure.sh
+              alpine-do-$(date +%Y-%m-%d).qcow2 -- ./do-droplet/configure.sh
         shell: alpine.sh --root {0}
 
-      - name: Build image for x86_64 with UEFI mode
+      - name: Verify DigitalOcean image requirements
         run: |
-          ./alpine-make-vm-image \
-              --image-format qcow2 \
-              --image-size 2G \
-              --boot-mode UEFI \
-              --repositories-file example/repositories \
-              --packages "$(cat example/packages)" \
-              --fs-skel-dir example/rootfs \
-              --fs-skel-chown root:root \
-              --script-chroot \
-              alpine-uefi-$(date +%Y-%m-%d).qcow2 -- ./example/configure.sh
-        shell: alpine.sh --root {0}
+          set -eu
+          apk add --no-progress qemu-img e2fsprogs-extra
+          modprobe nbd max_part=16 2>/dev/null || true
+          qemu-nbd --connect=/dev/nbd0 alpine-do-$(date +%Y-%m-%d).qcow2
+          trap 'umount /mnt 2>/dev/null; qemu-nbd --disconnect /dev/nbd0' EXIT
+          # Give the kernel a moment to scan the GPT.
+          for _ in $(seq 30); do [ -e /dev/nbd0p1 ] && break; sleep 1; done
+          mount /dev/nbd0p1 /mnt
 
-      - name: Install qemu-aarch64 and register in binfmt
-        uses: jirutka/setup-alpine@v1
-        with:
-          arch: aarch64
-          shell-name: alpine-aarch64.sh
+          fail=0
+          check() { if eval "$2"; then echo "ok: $1"; else echo "FAIL: $1"; fail=1; fi; }
 
-      # Note: We cannot run alpine-make-vm-image inside emulated chroot due to nbd.
-      - name: Build image for aarch64
-        run: |
-          ./alpine-make-vm-image \
-              --arch aarch64 \
-              --branch edge \
-              --image-format qcow2 \
-              --image-size 2G \
-              --packages "$(cat example/packages)" \
-              --fs-skel-dir example/rootfs \
-              --fs-skel-chown root:root \
-              --script-chroot \
-              alpine-aarch64-$(date +%Y-%m-%d).qcow2 -- ./example/configure.sh
+          check 'ConfigDrive precedes NoCloud in datasource_list' \
+              'grep -qE "^datasource_list:.*ConfigDrive" /mnt/etc/cloud/cloud.cfg.d/01-datasource.cfg'
+          check 'cloud-init services registered by setup-cloud-init' \
+              'ls /mnt/etc/runlevels/*/cloud-init-local >/dev/null 2>&1'
+          check 'sshd enabled at boot' \
+              'ls /mnt/etc/runlevels/default/sshd >/dev/null 2>&1'
+          check 'sshd_config has UsePAM yes' \
+              'grep -q "^UsePAM yes" /mnt/etc/ssh/sshd_config'
+          check 'no baked-in SSH host keys' \
+              '! ls /mnt/etc/ssh/ssh_host_* >/dev/null 2>&1'
+          check 'machine-id is empty' \
+              '! [ -s /mnt/etc/machine-id ]'
+          check 'root filesystem is ext4' \
+              'blkid -o value -s TYPE /dev/nbd0p1 | grep -qx ext4'
+
+          exit $fail
         shell: alpine.sh --root {0}

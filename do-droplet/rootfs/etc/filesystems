@@ -1,0 +1,4 @@
+# Ensures busybox mount autoloads the iso9660 module when cloud-init probes
+# the ConfigDrive with "mount -t auto".  See README.Alpine of the cloud-init
+# aport, section "Using ISO images for cloud-init configuration".
+iso9660
