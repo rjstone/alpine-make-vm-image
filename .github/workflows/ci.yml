@@ -91,18 +91,24 @@ jobs:
         shell: alpine.sh --root {0}
 
       # The image is built by root inside the chroot; make it readable by the
-      # runner user so upload-artifact can pick it up.
-      - name: Name and hand over the image
+      # runner user so the compress and upload steps can touch it.
+      #
+      # DigitalOcean accepts a custom image compressed with gzip or bzip2 and
+      # decompresses it on import, so we ship the bz2 and never the raw qcow2.
+      - name: Compress the image
         run: |
           set -eu
           sudo chown "$(id -u):$(id -g)" alpine-do.qcow2
           echo "IMAGE_NAME=alpine-do-$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
-          ls -l alpine-do.qcow2
+          bzip2 -9 alpine-do.qcow2
+          ls -l alpine-do.qcow2.bz2
 
       - name: Upload image
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.IMAGE_NAME }}
-          path: alpine-do.qcow2
+          path: alpine-do.qcow2.bz2
           if-no-files-found: error
           retention-days: 30
+          # Already bzip2'd; re-deflating it in the artifact zip only burns time.
+          compression-level: 0
