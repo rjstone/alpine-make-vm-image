@@ -38,13 +38,16 @@ groups:
 # run `docker` can run `docker run -v /:/host ...` and take over the machine.
 # On a single-admin VPS that is usually an accepted tradeoff — just do not treat
 # the docker group as a way to give someone "limited" access.
+# No ssh_authorized_keys here on purpose. DigitalOcean injects the SSH key you
+# picked at Droplet-creation time into root's authorized_keys, and cloud-init's
+# ssh module does that in the init stage — before runcmd runs in the final
+# stage. So runcmd (below) can just copy root's keys onto this user, and this
+# file never has to contain a hardcoded public key.
 users:
   - default
   - name: deploy
     groups: [docker, wheel]
     shell: /bin/sh
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAAREPLACE_ME you@example.com
 
 # ---------------------------------------------------------------------------
 # Packages
@@ -141,6 +144,28 @@ write_files:
     #   have been fine.
 
 runcmd:
+  # Copy whatever SSH key(s) DigitalOcean injected for root onto the deploy
+  # user, rather than hardcoding a key above. install(1) creates the file with
+  # the right owner and mode in one step; sshd refuses to use ~/.ssh or
+  # authorized_keys if either is group- or world-writable.
+  - |
+    if [ -s /root/.ssh/authorized_keys ]; then
+      install -d -m 0700 -o deploy -g deploy /home/deploy/.ssh
+      install -m 0600 -o deploy -g deploy \
+          /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+      echo "deploy: installed $(wc -l < /home/deploy/.ssh/authorized_keys) key(s) from root"
+    else
+      echo 'WARNING: /root/.ssh/authorized_keys missing or empty; deploy has no key' >&2
+    fi
+
+  # Let wheel members run commands as root. Alpine ships /etc/doas.conf with
+  # this rule present but COMMENTED OUT, so without this the deploy user is in
+  # wheel and still cannot escalate. Appending is idempotent-guarded so re-runs
+  # do not stack duplicate rules.
+  - |
+    grep -q '^permit persist :wheel' /etc/doas.conf \
+        || echo 'permit persist :wheel' >> /etc/doas.conf
+
   # Apply the sysctls now; without this they only take effect after a reboot.
   - sysctl -p /etc/sysctl.d/99-docker.conf
 
