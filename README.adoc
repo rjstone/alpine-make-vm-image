@@ -12,11 +12,11 @@ This project provides a script for making customized https://alpinelinux.org/[Al
 
 This is a fork of the {gh-name} repo which has a different default branch for the DO image build, and this different readme, but is otherwise the same as {gh-name}.
 
-== Documentatiom for {script-name}
+== Documentation for {script-name}
 
-See the `main` branch for the documentstiom om the base image build script.
+See the `master` branch for the documentation on the base image build script.
 
-See the docs[docs] directory and the do-image[do-image] directory for information anout the DO-specific image in this branch.
+See the link:docs/[docs] directory and the link:do-droplet/[do-droplet] directory for information about the DO-specific image in this branch.
 
 == License
 
