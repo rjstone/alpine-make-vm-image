@@ -1,0 +1,181 @@
+#cloud-config
+#
+# Installs Docker + Compose v2 on a Droplet booted from the do-droplet image.
+#
+# Paste this into the "User data" box when creating the Droplet, or pass it with
+#   doctl compute droplet create ... --user-data-file docs/user-data-docker.yaml
+#
+# Tuned for the WORST CASE Droplet: 512 MiB RAM / 1 vCPU / 10 GiB disk ($4/mo).
+# On a larger Droplet everything here still works; the parts you would relax are
+# marked "512 MiB:" so they are easy to find.
+#
+# The base image deliberately ships without Docker so that one image serves every
+# variant. Everything Docker-specific happens here, on first boot.
+#
+# NOTE: none of this has been run on a real Droplet yet. Treat the "verify on
+# first boot" comments as a genuine checklist, not boilerplate.
+
+# ---------------------------------------------------------------------------
+# Groups
+# ---------------------------------------------------------------------------
+# The docker group must be pre-created here. cloud-init runs the users/groups
+# module in the *init* stage, but installs packages in the later *config* stage,
+# so a user that references group "docker" would fail with "group not found" —
+# the docker package that would normally create the group has not been installed
+# yet. Declaring it here makes the group exist first; the package install later
+# finds it already present and reuses it.
+groups:
+  - docker
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+# "default" keeps cloud-init's built-in alpine user. Per the Alpine cloud-init
+# README, if you specify a users: block at all you MUST list default explicitly
+# or you lose that account.
+#
+# SECURITY: membership in the docker group is equivalent to root. Anyone who can
+# run `docker` can run `docker run -v /:/host ...` and take over the machine.
+# On a single-admin VPS that is usually an accepted tradeoff — just do not treat
+# the docker group as a way to give someone "limited" access.
+users:
+  - default
+  - name: deploy
+    groups: [docker, wheel]
+    shell: /bin/sh
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAREPLACE_ME you@example.com
+
+# ---------------------------------------------------------------------------
+# Packages
+# ---------------------------------------------------------------------------
+# 512 MiB: package_upgrade adds a minute or two to first boot and briefly uses
+# memory and disk. Worth it on a fresh image whose packages are as old as the
+# last CI build. Set it to false if you want the fastest possible provision.
+package_update: true
+package_upgrade: true
+
+# The `docker` package is only a meta-package pulling in engine + cli + openrc.
+# They are listed individually here so it is obvious what lands on disk and so
+# no docs/completion subpackages come along for the ride.
+#
+# Deliberately NOT installed:
+#   docker-cli-buildx        multi-arch/BuildKit builds. A 512 MiB box is a poor
+#                            build host; build elsewhere and pull the image.
+#   docker-rootless-extras   rootless mode avoids the docker-group-equals-root
+#                            problem but is fiddly and gives up privileged ports.
+#   docker-registry          only if you want a registry running on this box.
+packages:
+  - docker-engine
+  - docker-cli
+  - docker-cli-compose
+  - docker-openrc
+
+# ---------------------------------------------------------------------------
+# Swap
+# ---------------------------------------------------------------------------
+# 512 MiB: this is the single most important setting here. The Docker daemon
+# alone idles around 100 MiB; without swap, a modest container plus a package
+# install is enough for the OOM killer to start killing things — often dockerd
+# itself. 1 GiB costs 10% of the 10 GiB disk, which is a good trade.
+#
+# On a 1 GiB+ Droplet you can drop this to 512 MiB or remove it entirely.
+#
+# Verify on first boot: `free -h` should show the swap. cloud-init's swap
+# support shells out to mkswap/swapon, which on Alpine are busybox applets, so
+# this is the item most likely to behave differently than on Debian/Ubuntu.
+swap:
+  filename: /swapfile
+  size: 1073741824      # 1 GiB, in bytes
+  maxsize: 1073741824
+
+write_files:
+  # -------------------------------------------------------------------------
+  # Docker daemon configuration
+  # -------------------------------------------------------------------------
+  - path: /etc/docker/daemon.json
+    permissions: '0644'
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "3" },
+        "storage-driver": "overlay2",
+        "live-restore": true,
+        "max-concurrent-downloads": 3,
+        "max-concurrent-uploads": 3
+      }
+    # log-opts: Docker's default json-file driver has NO log rotation. A single
+    #   chatty container will happily grow one log file until the 10 GiB disk is
+    #   full, which takes the whole Droplet down. 10m x 3 caps each container at
+    #   30 MiB. This is the most common way a small Docker VPS dies.
+    #
+    # storage-driver: overlay2 is the correct driver on Alpine's ext4 root and is
+    #   normally auto-detected. Pinned so a future default change cannot silently
+    #   move you to something slower.
+    #
+    # live-restore: containers keep running while dockerd restarts (e.g. across a
+    #   package upgrade). REMOVE THIS if you ever run `docker swarm init` —
+    #   live-restore is incompatible with Swarm mode.
+    #
+    # max-concurrent-downloads/uploads: defaults are 3 and 5. Lowering the upload
+    #   figure and keeping downloads modest limits how many layers are held in
+    #   flight at once, which keeps `docker pull` from spiking memory on a 1 vCPU
+    #   512 MiB box.
+
+  # -------------------------------------------------------------------------
+  # Kernel tuning
+  # -------------------------------------------------------------------------
+  - path: /etc/sysctl.d/99-docker.conf
+    permissions: '0644'
+    content: |
+      vm.swappiness = 10
+      vm.overcommit_memory = 1
+    # swappiness 10: with swap present, the default (60) will page out container
+    #   working sets too eagerly and everything feels slow. 10 keeps swap as an
+    #   emergency reserve rather than routine storage — which is what we want it
+    #   for: surviving spikes, not running from disk.
+    #
+    # overcommit_memory 1: allow overcommit. Container runtimes fork frequently
+    #   and processes routinely reserve far more address space than they touch.
+    #   With only 512 MiB the strict heuristic refuses allocations that would
+    #   have been fine.
+
+runcmd:
+  # Apply the sysctls now; without this they only take effect after a reboot.
+  - sysctl -p /etc/sysctl.d/99-docker.conf
+
+  # Start Docker at boot and now. cloud-init runs late enough that the network
+  # and the docker package are both ready.
+  - rc-update add docker default
+  - rc-service docker start
+
+  # Smoke test, visible in /var/log/cloud-init-output.log on first boot.
+  - docker version
+  - docker compose version
+
+# ---------------------------------------------------------------------------
+# Things this file deliberately does NOT do
+# ---------------------------------------------------------------------------
+#
+# FIREWALL. Do not install awall/nftables rules here and assume you are covered.
+# Docker manages its own iptables chains, and publishing a port with
+# `-p 8080:80` inserts a DNAT rule that bypasses host filter rules — a firewall
+# on the Droplet will NOT protect a published port. Two things actually work:
+#   1. DigitalOcean's Cloud Firewall, which runs outside the guest where Docker
+#      cannot reach it. This is the right answer for a Droplet.
+#   2. Binding internal services to loopback: `-p 127.0.0.1:8080:80`, so the
+#      port is never exposed on the public interface in the first place.
+#
+# CGROUPS. Alpine's OpenRC defaults to hybrid cgroup mode. If container resource
+# limits (`--memory`, `--cpus`) appear not to be enforced, set
+# rc_cgroup_mode="unified" in /etc/rc.conf and reboot. Left alone here because
+# it is a reactive fix, not something to change speculatively.
+#
+# do-agent. DigitalOcean's in-guest metrics agent has no Alpine package and its
+# installer targets Debian/RPM only. You get hypervisor-level graphs in the
+# control panel but not in-guest memory/disk metrics. There is no clean fix.
+#
+# NTP. Already handled: the base image installs and enables chrony.
+#
+# SSH HARDENING. Already handled in the image: openssh-server-pam with
+# `UsePAM yes`, PermitRootLogin prohibit-password, PasswordAuthentication no.

@@ -9,6 +9,7 @@ and reviewable) or a plan document.
 | `digitalocean-custom-images-upload.md` | <https://docs.digitalocean.com/products/custom-images/how-to/upload/index.html.md> | 2026-08-14 (page `last_updated: 2026-07-13`) |
 | `alpine-cloud-init-README.Alpine.txt` | <https://git.alpinelinux.org/aports/plain/community/cloud-init/README.Alpine> | 2026-08-14 |
 | `do-droplet-plan.md` | — | implementation plan for this work |
+| `user-data-docker.yaml` | — | cloud-init user-data to install Docker + Compose on first boot |
 
 ## Other references
 
