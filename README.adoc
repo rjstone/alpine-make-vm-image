@@ -10,13 +10,13 @@ endif::env-github[]
 
 This project provides a script for making customized https://alpinelinux.org/[Alpine Linux] VPS qcow2 images for Digital Ocean "Droplets" (their brand name for their VPS service instances). They are built for BIOS boot using https://syslinux.org/[Syslinux], x86_64, install `cloud-init`, `gcompat`, and otherwise only the bare minimum stuff needed.
 
-This is a fork of the alpine-make-vm-image which has a different default branch for the DO image build and this different readme, but is otherwise the same as `
+This is a fork of the {gh-name} repo which has a different default branch for the DO image build, and this different readme, but is otherwise the same as {gh-name}.
 
 == Documentatiom for {script-name}
 
 See the `main` branch for the documentstiom om the base image build script.
 
-See the [docs](docs) directory and the [do-image](do-image) directory for information anout the DO-specific image in this branch.
+See the docs[docs] directory and the do-image[do-image] directory for information anout the DO-specific image in this branch.
 
 == License
 
