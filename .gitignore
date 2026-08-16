@@ -1,0 +1,4 @@
+# Agent tooling — local only, never committed
+CLAUDE.md
+AGENTS.md
+.claude/

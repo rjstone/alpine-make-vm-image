@@ -1,0 +1,84 @@
+#cloud-config
+groups:
+    - docker
+users:
+    - default
+    - name: deploy
+      groups: [docker, wheel]
+      shell: /bin/sh
+package_update: true
+package_upgrade: true
+packages:
+    - apk-tools
+    - apk-tools-doc
+    - bash
+    - bash-doc
+    - bzip2
+    - bzip2-doc
+    - curl
+    - curl-doc
+    - docker-engine
+    - docker-cli
+    - docker-cli-compose
+    - docker-openrc
+    - git
+    - git-doc
+    - less
+    - less-doc
+    - man-pages
+    - mandoc
+    - python3
+    - python3-doc
+    - vim
+    - vim-doc
+    - wget
+    - wget-doc
+    - xz
+    - xz-doc
+swap:
+    filename: /swapfile
+    size: 1073741824
+    maxsize: 1073741824
+write_files:
+    - path: /etc/doas.d/60-wheel.conf
+      owner: "root:root"
+      permissions: "0400"
+      content: |
+          permit nopass :wheel
+    - path: /etc/docker/daemon.json
+      permissions: "0644"
+      content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": { "max-size": "10m", "max-file": "3" },
+            "storage-driver": "overlay2",
+            "live-restore": true,
+            "max-concurrent-downloads": 3,
+            "max-concurrent-uploads": 3
+          }
+    - path: /etc/sysctl.d/99-docker.conf
+      permissions: "0644"
+      content: |
+          vm.swappiness = 10
+          vm.overcommit_memory = 1
+runcmd:
+    - |
+        if [ -s /root/.ssh/authorized_keys ]; then
+          install -d -m 0700 -o deploy -g deploy /home/deploy/.ssh
+          install -m 0600 -o deploy -g deploy \
+              /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+          echo "deploy: installed $(wc -l < /home/deploy/.ssh/authorized_keys) key(s) from root"
+        else
+          echo 'WARNING: /root/.ssh/authorized_keys missing or empty; deploy has no key' >&2
+        fi
+    - doas -C /etc/doas.conf || echo "ERROR - doas /etc/doas.conf invalid" >&2
+    - doas -C /etc/doas.d/60-wheel.conf || echo "ERROR - doas /etc/doas.d/60-wheel.conf invalid" >&2
+    - sysctl -p /etc/sysctl.d/99-docker.conf
+    - rc-update add docker default
+    - rc-service docker start
+    - |
+        for i in $(seq 1 30); do
+          docker version >/dev/null 2>&1 && break
+          sleep 1
+        done
+        docker version && docker compose version

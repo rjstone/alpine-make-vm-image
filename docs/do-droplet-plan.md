@@ -1,17 +1,15 @@
 # DigitalOcean Droplet Alpine base image
 
+This is a coding agent plan for reproducing the main work done to build the
+do-droplet directory and contents, plus the base github CI workflow. Was originally
+created by Claude but edited by a human.
+
 ## Context
 
 We want GitHub CI to build a DigitalOcean-compatible qcow2 of Alpine Linux, sized for
-the $4/mo (512 MiB / 10 GiB) or $6/mo (1 GiB / 25 GiB) Droplet. The eventual workload is
-Docker + Docker Compose, but this first pass builds a **lean cloud-init-ready base image**
-— Docker gets installed on first boot via cloud-init user-data, so the same base serves
-every variant.
-
-Today the repo only has `example/`, a generic demo profile, and `.github/workflows/ci.yml`,
-which builds six throwaway images across Ubuntu/Alpine runners and BIOS/UEFI/aarch64.
-We replace that with a single job building one DO-targeted image, and add a `docs/`
-directory holding the vendor requirements we're building against.
+the $4/mo (512 MiB / 10 GiB) or $6/mo (1 GiB / 25 GiB) Droplet. This image build builds
+a **lean cloud-init-ready base image** — extra things like Docker get installed on
+first boot via cloud-init user-data, so the same base serves every variant.
 
 ### Requirements this is built against
 
@@ -34,16 +32,15 @@ From Alpine's `cloud-init` `README.Alpine`:
   Fix with the `mount` package **and** an `/etc/filesystems` entry.
 - `cc_growpart`/`cc_resizefs` need `cloud-utils-growpart`, `e2fsprogs-extra`, `parted`,
   `sgdisk` (GPT), `blockdev`, `lsblk`.
-- `eudev` is recommended over mdev; upstream cloud-init is only tested against udev.
+- `eudev` is recommended over mdev because it is based on udev with the systemd dependency
+  removed; upstream cloud-init is only tested against udev.
 
 ### Decisions taken
 
-- **BIOS + GPT, not UEFI.** You originally specified UEFI; on review, DO's docs never promise
-  UEFI boot and Droplets have historically booted SeaBIOS, so a UEFI-only image risks not
+- **BIOS + GPT** Droplets have historically booted SeaBIOS, so a UEFI-only image risks not
   booting at all. Confirmed: build BIOS mode with `--partition` (GPT satisfies DO's partition
   requirement).
-- **Build only** — no artifact upload or release publishing this pass.
-- **No Docker baked in** — base image only.
+- Also put `gcompat`, `libstdc++` in the base image, though they are optional.
 
 ## Work
 
@@ -68,13 +65,13 @@ DO config files, which keeps `--fs-skel-dir` meaningful:
 `do-droplet/packages` — replacing `example/packages`:
 
 | purpose | packages |
-|---|---|
+| --- | --- |
 | cloud-init core | `cloud-init`, `eudev`, `dhclient` |
 | ConfigDrive iso9660 | `mount`, `util-linux-misc` |
 | growpart / resizefs | `cloud-utils-growpart`, `e2fsprogs`, `e2fsprogs-extra`, `parted`, `gptfdisk` |
 | SSH (PAM variant, mandatory) | `openssh-server-pam` |
 | privilege escalation | `doas`, `doas-sudo-shim` |
-| glibc compat | `gcompat`, `libstdc++` |
+| glibc compat (optional) | `gcompat`, `libstdc++` |
 | time / TLS / misc | `chrony`, `ca-certificates`, `tzdata`, `logrotate`, `less` |
 
 `gcompat` + `libstdc++` go in the base so glibc-linked binaries (common in vendor-shipped
@@ -127,14 +124,11 @@ on first boot.
 
 ### 3. `docs/`
 
-`mkdir docs` and save the three references. My direct egress is blocked for
-`docs.digitalocean.com` and `git.alpinelinux.org` (403 from the proxy), but Firecrawl reaches
-both — I'll fetch through it and strip the markdown escaping it adds.
+`mkdir docs` and save three references.
 
 - `docs/digitalocean-custom-images-upload.md` — the DO upload/requirements page.
-- `docs/alpine-cloud-init-README.Alpine.txt` — the aports README.
-- `docs/do-droplet-plan.md` — already committed; re-sync it with this plan's final package
-  table (it predates the `gcompat`/`libstdc++` addition).
+- `docs/alpine-cloud-init-README.Alpine.txt` — the aports README. (some outdated info here)
+- `docs/do-droplet-plan.md` — this file.
 - `docs/README.md` — short index naming each file, its source URL, and fetch date, plus a
   pointer to <https://cloud-init.io/> and the red-lichtie Alpine cloud-init repo. Worth a line
   in that index: red-lichtie's config uses `datasource_list: [ NoCloud, ConfigDrive ]`, which is
@@ -142,8 +136,7 @@ both — I'll fetch through it and strip the markdown escaping it adds.
 
 ## Verification
 
-CI is the real test — `alpine-make-vm-image` needs nbd and root, so it can't run in this
-container. On push, the `build-alpine` job must go green; that alone proves the package set
+On push, the `build-alpine` job must go green; that alone proves the package set
 resolves, `setup-cloud-init` exists and runs, and the image builds and unmounts cleanly.
 
 Then, before trusting it, add a post-build assertion step in the same job (cheap, catches the
@@ -155,7 +148,20 @@ failure modes that CI green would otherwise hide) — remount the built image wi
 - `grep '^UsePAM yes' /etc/ssh/sshd_config`
 - `/etc/ssh/ssh_host_*` absent, `/etc/machine-id` empty
 
-End-to-end validation is manual and out of CI: upload the qcow2 to DO
-(`doctl compute image create ... --image-url ...`), create a $4 Droplet with an SSH key, and
-confirm you can `ssh root@<ip>`, that `df -h /` shows the full 10 GiB (growpart worked), and
-that `apk add docker docker-cli-compose` via user-data succeeds.
+Additional CI/CD isn't covered here. Compressing the image as `.bz2` is recommended and
+a PAT generated by DO can be used to automatically upload the image to DO if desired.
+
+End-to-end validation is manual and out of CI. Upload the qcow2 and test:
+
+```bash
+doctl compute image create alpine-do-droplet-latest --image-url <url of built image artifact> --region <region slug(s) from doctl compute region list>
+doctl compute image list-user
+doctl compute ssh-key list
+# if needed: doctl compute ssh-key import --public-key-file <file>
+# note that you may need to specify image ID rather than slug for custom images
+# ssh keys probably need ID as well
+doctl compute droplet create --image XXXXXXXXX --region SFO3 --size s-1vcpu-512mb-10gb --ssh-keys 39974029 --tag-name delete-me-just-testing --user-data-file user-data-docker.yaml --wait alpine-test-droplet-delete-me
+```
+
+and confirm you can `ssh root@<ip>`, that `df -h /` shows the full 10 GiB (growpart
+worked), and that user-data succeeds.

@@ -1,10 +1,8 @@
 = Make Alpine Linux VPS Image for Digital Ocean Droplets
 :script-name: alpine-make-vm-image
-:script-sha1: 33b338dc0d2ce67a8dd4f1701862f051aed565f1
 :gh-name: alpinelinux/{script-name}
 :fork-name: rjstone/{script-name}
 :fork-branch: do-droplet-image
-:version: 0.13.4
 
 ifdef::env-github[]
 image:https://github.com/{fork-name}/actions/workflows/ci.yml/badge.svg?branch={fork-branch}["Build Status", link="https://github.com/{fork-name}/actions/workflows/ci.yml?query=branch%3A{fork-branch}"]
@@ -14,11 +12,32 @@ This project provides a script for making customized https://alpinelinux.org/[Al
 
 This is a fork of the {gh-name} repo which has a different default branch for the DO image build, and this different readme, but is otherwise the same as {gh-name}.
 
+== Documentation for {fork-branch}
+
+See the link:docs/[docs] directory and the link:do-droplet/[do-droplet] directory for information about the DO-specific image in this branch.
+
+See link:user-data-examples/[user-data-examples] for some `cloud-init` user-data example yaml configs that you can use to configure and install stuff on first boot.
+
+A short quick start for using the image if you have doctl CLI set up (install the doctl package and use `doctl auth init` with a personal access token if not):
+
+[source,bash]
+----
+doctl compute region list
+doctl compute image create alpine-latest --image-url https://github.com/rjstone/alpine-make-vm-image/releases/download/image-latest/alpine-do.qcow2.bz2 --region <region slug(s)>
+doctl compute image list-user
+doctl compute ssh-key list
+# if needed: doctl compute ssh-key import --public-key-file <file>
+# note that you may need to specify image ID rather than slug for custom images
+# ssh keys probably need ID as well
+doctl compute droplet create --image XXXXXXXXX --region SFO3 --size s-1vcpu-512mb-10gb --ssh-keys 39974029 --tag-name delete-me-just-testing --user-data-file your-user-data.yaml --wait alpine-test-droplet-delete-me
+----
+
+and confirm you can `ssh root@<ip>`, that `df -h /` shows the full 10 GiB (growpart
+worked), and that user-data succeeds.
+
 == Documentation for {script-name}
 
 See the `master` branch for the documentation on the base image build script.
-
-See the link:docs/[docs] directory and the link:do-droplet/[do-droplet] directory for information about the DO-specific image in this branch.
 
 == License
 
