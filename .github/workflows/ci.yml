@@ -135,7 +135,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: image-latest
+          TAG: do-droplet-image-latest
         run: |
           set -eu
           # Name the asset with the build date so a downloaded file is
@@ -169,7 +169,7 @@ jobs:
           DO_TOKEN: ${{ secrets.DO_IMG_UPLOAD_PAT }}
           DO_REGION: ${{ vars.DO_IMG_UPLOAD_REGION }}
           DO_IMAGE_NAME: alpine-do-droplet-latest
-          TAG: image-latest
+          TAG: do-droplet-image-latest
         run: |
           set -eu
 
