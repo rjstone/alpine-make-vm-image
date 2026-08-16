@@ -3,7 +3,16 @@ on:
   push:
     branches:
       - do-droplet-image
+    paths:
+      - "do-droplet/**"
+      - "alpine-make-vm-image"
+      - ".github/workflows/ci.yml"
   pull_request:
+    paths:
+      - "do-droplet/**"
+      - "alpine-make-vm-image"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
 
 jobs:
   build-alpine:
@@ -132,7 +141,7 @@ jobs:
       # Only publishes for pushes to the branch, never for pull requests, which
       # would otherwise let a PR overwrite the published image.
       - name: Publish rolling release
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: do-droplet-image-latest
@@ -164,7 +173,7 @@ jobs:
       #
       # NOTE: the API cannot replace the contents of an existing custom image
       - name: Upload image to DigitalOcean
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         env:
           DO_TOKEN: ${{ secrets.DO_IMG_UPLOAD_PAT }}
           DO_REGION: ${{ vars.DO_IMG_UPLOAD_REGION }}
