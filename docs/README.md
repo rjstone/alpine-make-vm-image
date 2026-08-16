@@ -5,25 +5,24 @@ local copy of upstream documentation (so the requirements we build against are p
 and reviewable) or a plan document.
 
 | File | Source | Fetched |
-|---|---|---|
+| --- | --- | --- |
 | `digitalocean-custom-images-upload.md` | <https://docs.digitalocean.com/products/custom-images/how-to/upload/index.html.md> | 2026-08-14 (page `last_updated: 2026-07-13`) |
 | `alpine-cloud-init-README.Alpine.txt` | <https://git.alpinelinux.org/aports/plain/community/cloud-init/README.Alpine> | 2026-08-14 |
-| `do-droplet-plan.md` | — | implementation plan for this work |
-| `user-data-docker.yaml` | — | cloud-init user-data to install Docker + Compose on first boot |
+| `do-droplet-plan.md` | — | implementation plan for reproducing the base do-droplet image build and ci verification (but not upload) |
 
 ## Getting the image onto DigitalOcean
 
 Every successful build on `do-droplet-image` publishes the bzip2'd image to a rolling
-prerelease tagged `image-latest`, so this URL is stable and always points at the most recent
+prerelease tagged `do-droplet-image-latest`, so this URL is stable and always points at the most recent
 build:
 
-    https://github.com/rjstone/alpine-make-vm-image/releases/download/image-latest/alpine-do.qcow2.bz2
+    https://github.com/rjstone/alpine-make-vm-image/releases/download/do-droplet-image-latest/alpine-do.qcow2.bz2
 
 Import it with DO's control panel ("Custom Images" -> "Import via URL") or:
 
 ```sh
 doctl compute image create "Alpine DO Droplet" \
-    --image-url "https://github.com/rjstone/alpine-make-vm-image/releases/download/image-latest/alpine-do.qcow2.bz2" \
+    --image-url "https://github.com/rjstone/alpine-make-vm-image/releases/download/do-droplet-image-latest/alpine-do.qcow2.bz2" \
     --image-distribution Unknown \
     --region nyc1
 ```
@@ -42,14 +41,14 @@ CI also pushes each build straight into the account, so no manual import is need
 two repository settings:
 
 | Setting | Kind | Value |
-|---|---|---|
+| --- | --- | --- |
 | `DO_IMG_UPLOAD_PAT` | secret | DigitalOcean personal access token (`dop_v1_...`) |
 | `DO_IMG_UPLOAD_REGION` | variable | Region slug, or a space-separated list, e.g. `nyc3 sfo3` |
 
 If the token uses **custom scopes** rather than full access, it needs all three of
 `image:create`, `image:read` and `image:delete` — read for polling the import, delete for
 removing the superseded image. A token missing `image:delete` still uploads fine but leaves
-old images behind, accumulating storage charges.
+old images behind, accumulating storage charges. `tag:*` permissions are needed to tag images.
 
 If the upload step fails, the HTTP status tells you which half is wrong:
 
@@ -87,9 +86,6 @@ places. Creating it N times would produce N distinct images that happen to share
 the cleanup step (which matches on name) would then delete all but the newest. Transfers
 happen only after the initial import reaches `available`, since an image cannot be transferred
 before it exists.
-
-Note that the image consumes storage in every region it lives in, so a longer list costs
-proportionally more.
 
 ## Other references
 
