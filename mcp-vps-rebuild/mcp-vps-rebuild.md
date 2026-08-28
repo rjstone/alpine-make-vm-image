@@ -23,7 +23,7 @@ The `do-droplet` profile in this repository. It does **not** include Docker —
 via cloud-init, not in the image. If a future revision bakes it into the image
 instead, add `docker-engine` and `docker-cli-compose` to `do-droplet/packages`,
 enable the service in `do-droplet/configure.sh`, create the `docker` group with
-GID 999 there, and update both this file and the user data.
+GID 1000 there, and update both this file and the user data.
 
 ## Host prerequisites
 
@@ -46,23 +46,37 @@ allows passwordless `doas` for `wheel`.
 
 ### The docker group GID is a coupling, not a detail
 
-The `mcp-docker` container in the hub's compose stack builds a user into the
-`docker` group **at image build time** so it can read the bind-mounted socket
-without running as root. Both sides must agree on the numeric GID:
+The `mcp-docker` container in the hub's compose stack creates a group with the
+host's docker GID **at image build time**, and runs its non-root user in that
+group, so it can read the bind-mounted socket without running as root. Both
+sides must agree on the number:
 
-| Side | Where |
-| --- | --- |
-| Host | `bootcmd` in `user-data-mcp-docker.yaml` pins it to `999` |
-| Container | `DOCKER_GID` build arg in the hub's `caddy/compose.yml` |
+| Side | Where | Value |
+| --- | --- | --- |
+| Host | `bootcmd` in `user-data-mcp-docker.yaml` | `1000` |
+| Container | `DOCKER_GID` build arg in the hub's `caddy/compose.yml` | `1000` |
 
-The `bootcmd` exists precisely so this is not left to chance — cloud-init's
+Because the container side is a *build* arg, changing the GID means editing
+both places and rebuilding the image — a restart is not enough.
+
+The `bootcmd` exists so the host side is not left to chance: cloud-init's
 `groups:` module has no way to specify a GID, so without it the group takes
-whatever number happened to be free. Change one side and you must change the
-other and rebuild the image.
+whatever number happened to be free.
 
-A mismatch is not a build failure. It surfaces as permission denied on
-`/var/run/docker.sock` from inside `mcp-docker`, at run time. The last
-`runcmd` echoes the actual GID into the cloud-init log; check there first:
+**Use 1000, not 999.** Alpine's `alpine-baselayout` already assigns GID 999 to
+the `ping` group, in the container image as well as on the host. Building
+against 999 fails outright:
+
+```
+addgroup: gid '999' in use
+```
+
+1000 is the first GID Alpine leaves free, and is what the running VPS uses.
+
+A mismatch between two *valid* GIDs is worse, because it is not a build
+failure — it surfaces as permission denied on `/var/run/docker.sock` from
+inside `mcp-docker`, at run time. The last `runcmd` echoes the actual GID into
+the cloud-init log; check there first:
 
 ```sh
 getent group docker | cut -d: -f3   # must match DOCKER_GID

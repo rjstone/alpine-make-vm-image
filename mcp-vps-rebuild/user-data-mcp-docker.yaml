@@ -1,14 +1,19 @@
 #cloud-config
 # Pin the docker group's GID rather than letting cloud-init pick the next free
-# one. The hub's mcp-docker container builds a user into this group at image
-# build time (DOCKER_GID in mcp-vps caddy/compose.yml, default 999) so it can
-# read the bind-mounted socket without running as root. A mismatch is not a
-# build failure — it surfaces later as permission denied on
-# /var/run/docker.sock. bootcmd runs before both the users and packages
-# modules, so the group exists with this GID before anything wants to join it
-# and before docker-engine could create its own.
+# one. The hub's mcp-docker container creates a group with this GID at image
+# build time (DOCKER_GID in mcp-vps caddy/compose.yml) so its non-root user can
+# read the bind-mounted socket. The two must agree.
+#
+# 1000, not 999: Alpine's own alpine-baselayout already uses GID 999 for the
+# `ping` group, so a container build that tries to create a group there fails
+# with "addgroup: gid '999' in use". 1000 is the first GID Alpine leaves free
+# and is what the running VPS uses.
+#
+# bootcmd runs before both the users and packages modules, so the group exists
+# at this GID before anything wants to join it and before docker-engine could
+# create its own.
 bootcmd:
-    - getent group docker || addgroup -g 999 docker
+    - getent group docker || addgroup -g 1000 docker
 users:
     - default
     - name: deploy
@@ -94,4 +99,4 @@ runcmd:
     - |
         # The hub's mcp-docker image is built against this GID; if the two ever
         # drift, this line in the cloud-init log is where to look first.
-        echo "docker group GID: $(getent group docker | cut -d: -f3) (mcp-vps expects 999)"
+        echo "docker group GID: $(getent group docker | cut -d: -f3) (mcp-vps expects 1000)"
