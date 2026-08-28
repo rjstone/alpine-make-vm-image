@@ -9,7 +9,10 @@ and reviewable) or a plan document.
 | `digitalocean-custom-images-upload.md` | <https://docs.digitalocean.com/products/custom-images/how-to/upload/index.html.md> | 2026-08-14 (page `last_updated: 2026-07-13`) |
 | `alpine-cloud-init-README.Alpine.txt` | <https://git.alpinelinux.org/aports/plain/community/cloud-init/README.Alpine> | 2026-08-14 |
 | `do-droplet-plan.md` | — | implementation plan for reproducing the base do-droplet image build and ci verification (but not upload) |
-| `mcp-vps-rebuild.md` | — | host-side prerequisites for rebuilding the `mcp.rjstone.net` MCP hub on a fresh droplet (the hub's own config lives in the private `mcp-vps` repo) |
+
+Rebuilding the `mcp.rjstone.net` MCP hub is documented separately, in
+[`../mcp-vps-rebuild/`](../mcp-vps-rebuild/mcp-vps-rebuild.md), alongside the
+cloud-init user data that provisions the host.
 
 ## Getting the image onto DigitalOcean
 

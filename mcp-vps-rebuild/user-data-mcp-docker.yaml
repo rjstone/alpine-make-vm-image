@@ -1,6 +1,14 @@
 #cloud-config
-groups:
-    - docker
+# Pin the docker group's GID rather than letting cloud-init pick the next free
+# one. The hub's mcp-docker container builds a user into this group at image
+# build time (DOCKER_GID in mcp-vps caddy/compose.yml, default 999) so it can
+# read the bind-mounted socket without running as root. A mismatch is not a
+# build failure — it surfaces later as permission denied on
+# /var/run/docker.sock. bootcmd runs before both the users and packages
+# modules, so the group exists with this GID before anything wants to join it
+# and before docker-engine could create its own.
+bootcmd:
+    - getent group docker || addgroup -g 999 docker
 users:
     - default
     - name: deploy
@@ -83,3 +91,7 @@ runcmd:
           sleep 1
         done
         docker version && docker compose version
+    - |
+        # The hub's mcp-docker image is built against this GID; if the two ever
+        # drift, this line in the cloud-init log is where to look first.
+        echo "docker group GID: $(getent group docker | cut -d: -f3) (mcp-vps expects 999)"

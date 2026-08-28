@@ -2,8 +2,14 @@
 
 What has to exist on a freshly booted droplet before the MCP hub
 (`mcp.rjstone.net`) comes up. The hub's configuration lives in the separate
-private `mcp-vps` repository, whose root maps to `/opt` on the VPS; this file
-records only the **host-side** prerequisites, which that repo does not track.
+private `mcp-vps` repository, whose root maps to `/opt` on the VPS; this
+directory records only the **host-side** prerequisites, which that repo does
+not track.
+
+| File | Purpose |
+| --- | --- |
+| `mcp-vps-rebuild.md` | This document |
+| `user-data-mcp-docker.yaml` | cloud-init user data that provisions the host |
 
 > **Status: not verified against a live rebuild.** This was written alongside
 > the docker-MCP change in `mcp-vps` and describes what that stack requires. No
@@ -13,32 +19,54 @@ records only the **host-side** prerequisites, which that repo does not track.
 ## Base image
 
 The `do-droplet` profile in this repository. It does **not** include Docker —
-`do-droplet/packages` has no `docker` entry — so Docker is a post-boot install,
-not part of the image. If a future revision moves it into the image, add
-`docker` and `docker-cli-compose` to `do-droplet/packages` and enable the
-service in `do-droplet/configure.sh`, and update this file.
+`do-droplet/packages` has no `docker` entry — so Docker arrives at first boot
+via cloud-init, not in the image. If a future revision bakes it into the image
+instead, add `docker-engine` and `docker-cli-compose` to `do-droplet/packages`,
+enable the service in `do-droplet/configure.sh`, create the `docker` group with
+GID 999 there, and update both this file and the user data.
 
 ## Host prerequisites
 
-```sh
-# Alpine; community repo must be enabled in /etc/apk/repositories
-apk add docker docker-cli-compose git
-rc-update add docker default
-service docker start
-```
-
-The `docker` group is created by the `docker` package. Its numeric GID matters:
-the `mcp-docker` container in the hub's compose stack builds a user into that
-group so it can read the bind-mounted socket without running as root.
+`user-data-mcp-docker.yaml` in this directory does all of it. Pass it as the
+droplet's user data at creation time — DigitalOcean exposes it as "User data"
+in the control panel, or:
 
 ```sh
-getent group docker | cut -d: -f3   # feeds DOCKER_GID in caddy/compose.yml
+doctl compute droplet create mcp \
+    --image <the do-droplet custom image id> \
+    --user-data-file mcp-vps-rebuild/user-data-mcp-docker.yaml \
+    --region nyc1 --size s-2vcpu-2gb --ssh-keys <fingerprint>
 ```
 
-If this is not `999`, the `DOCKER_GID` build arg in the hub's `compose.yml`
-must be changed to match and the image rebuilt. A mismatch shows up as
-permission-denied on `/var/run/docker.sock` from inside `mcp-docker`, not as a
-build failure.
+It installs `docker-engine`, `docker-cli-compose`, and `git`; enables and
+starts the daemon; sets log rotation and `overlay2` in
+`/etc/docker/daemon.json`; adds a 1 GiB swapfile; creates a `deploy` user in
+the `docker` and `wheel` groups and copies root's authorized keys to it; and
+allows passwordless `doas` for `wheel`.
+
+### The docker group GID is a coupling, not a detail
+
+The `mcp-docker` container in the hub's compose stack builds a user into the
+`docker` group **at image build time** so it can read the bind-mounted socket
+without running as root. Both sides must agree on the numeric GID:
+
+| Side | Where |
+| --- | --- |
+| Host | `bootcmd` in `user-data-mcp-docker.yaml` pins it to `999` |
+| Container | `DOCKER_GID` build arg in the hub's `caddy/compose.yml` |
+
+The `bootcmd` exists precisely so this is not left to chance — cloud-init's
+`groups:` module has no way to specify a GID, so without it the group takes
+whatever number happened to be free. Change one side and you must change the
+other and rebuild the image.
+
+A mismatch is not a build failure. It surfaces as permission denied on
+`/var/run/docker.sock` from inside `mcp-docker`, at run time. The last
+`runcmd` echoes the actual GID into the cloud-init log; check there first:
+
+```sh
+getent group docker | cut -d: -f3   # must match DOCKER_GID
+```
 
 ## Not carried in the config repo
 
@@ -68,9 +96,12 @@ rules on the live host have not been confirmed.)*
 
 ## Bringing the stack up
 
+Once cloud-init has finished (`cloud-init status --wait`):
+
 ```sh
 git clone <mcp-vps remote> /opt        # or restore /opt from backup
 cd /opt/caddy
+# .env must be in place before this point or mcp-auth-proxy will not start
 docker compose build                   # agentgateway and mcp-docker build locally
 docker compose up -d
 docker compose ps
