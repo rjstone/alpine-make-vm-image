@@ -1,0 +1,100 @@
+#!/sbin/openrc-run
+# Adds the Droplet's "anchor" IPv4 address to its public interface. Reserved
+# IPs are delivered to the anchor address, so without it a Reserved IP pointed
+# at this Droplet goes nowhere.
+#
+# cloud-init only configures the anchor address from its DigitalOcean
+# datasource. Custom images must list ConfigDrive first, and its OpenStack-style
+# network_data.json has no anchor, so we fetch it from the metadata service.
+# This runs every boot rather than once per instance: a Droplet built from a
+# snapshot gets a new anchor, and a restart of net.eth0 restarts us with it.
+#
+# https://docs.digitalocean.com/reference/api/metadata/network-interfaces/
+
+description="Configure the DigitalOcean anchor IPv4 address (Reserved IP support)"
+
+: ${metadata_url:=http://169.254.169.254/metadata/v1/interfaces/public/0}
+: ${metadata_tries:=10}
+
+statefile=/run/do-anchor-ip
+
+depend() {
+	need net
+}
+
+fetch() {
+	wget -qO- -T 5 "$metadata_url/$1"
+}
+
+# 255.255.0.0 -> 16
+mask2prefix() {
+	local IFS=. bits=0 octet
+	for octet in $1; do
+		case $octet in
+			255) bits=$((bits + 8));;
+			254) bits=$((bits + 7));;
+			252) bits=$((bits + 6));;
+			248) bits=$((bits + 5));;
+			240) bits=$((bits + 4));;
+			224) bits=$((bits + 3));;
+			192) bits=$((bits + 2));;
+			128) bits=$((bits + 1));;
+			0) ;;
+			*) return 1;;
+		esac
+	done
+	echo $bits
+}
+
+# The public interface is eth0 in practice, but match on MAC to be sure.
+iface_for_mac() {
+	local dev
+	for dev in /sys/class/net/*; do
+		if [ "$(cat "$dev/address" 2>/dev/null)" = "$1" ]; then
+			echo "${dev##*/}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+start() {
+	ebegin "Adding DigitalOcean anchor IPv4 address"
+
+	local addr mask mac prefix iface i=0
+	until addr=$(fetch anchor_ipv4/address) \
+			&& mask=$(fetch anchor_ipv4/netmask) \
+			&& mac=$(fetch mac); do
+		i=$((i + 1))
+		if [ $i -ge "$metadata_tries" ]; then
+			eend 1 "metadata service did not return an anchor address"
+			return 1
+		fi
+		sleep 2
+	done
+
+	if ! prefix=$(mask2prefix "$mask"); then
+		eend 1 "unexpected anchor netmask '$mask'"
+		return 1
+	fi
+	if ! iface=$(iface_for_mac "$mac"); then
+		eend 1 "no interface has the public MAC $mac"
+		return 1
+	fi
+
+	if ! ip -4 addr show dev "$iface" | grep -qF " $addr/$prefix "; then
+		ip -4 addr add "$addr/$prefix" dev "$iface" || { eend 1; return 1; }
+	fi
+	echo "$addr/$prefix $iface" > "$statefile"
+	eend 0 "$addr/$prefix on $iface"
+}
+
+stop() {
+	[ -f "$statefile" ] || return 0
+	local cidr iface
+	read -r cidr iface < "$statefile"
+	ebegin "Removing DigitalOcean anchor IPv4 address $cidr"
+	ip -4 addr del "$cidr" dev "$iface" 2>/dev/null
+	rm -f "$statefile"
+	eend 0
+}
