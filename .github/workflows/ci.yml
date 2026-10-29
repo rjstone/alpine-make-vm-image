@@ -76,6 +76,10 @@ jobs:
               'find /mnt/etc/runlevels -name "cloud-init-local" | grep -q .'
           check 'sshd enabled at boot' \
               '[ -L /mnt/etc/runlevels/default/sshd ]'
+          # Reserved IPs are routed to the anchor address, which ConfigDrive
+          # network config omits; this service adds it from the metadata API.
+          check 'do-anchor-ip enabled at boot' \
+              '[ -L /mnt/etc/runlevels/default/do-anchor-ip ] && [ -x /mnt/etc/init.d/do-anchor-ip ]'
           check 'dhcpcd daemon NOT enabled at boot' \
               '! [ -L /mnt/etc/runlevels/default/dhcpcd ]'
           check 'timezone set to UTC' \

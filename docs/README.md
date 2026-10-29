@@ -128,6 +128,16 @@ From the Alpine `cloud-init` README:
   a file that plainly exists), `runparts` raises, and cloud-init marks `modules-final` as
   FAILED — so `cloud-init status` reports an error even though every module that matters ran.
 
+### Reserved IPs and the anchor address
+
+A Reserved IP is delivered to the Droplet's private **anchor** address
+(`/metadata/v1/interfaces/public/0/anchor_ipv4/`), which must be configured on the public
+interface. cloud-init adds it only from its `DigitalOcean` datasource; we must boot from
+`ConfigDrive`, whose OpenStack `network_data.json` has no anchor, so cloud-init never
+configures it. The `do-anchor-ip` OpenRC service (`do-droplet/rootfs/etc/init.d/`) fills the
+gap: on every boot it reads the anchor from the metadata service and adds it to the interface
+whose MAC matches the public one. It needs `net`, so restarting `net.eth0` re-adds it.
+
 ### Why the repositories file is pinned to v3.22
 
 `do-droplet/repositories` names `v3.22` explicitly rather than `latest-stable`, and it must

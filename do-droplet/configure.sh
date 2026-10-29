@@ -49,6 +49,7 @@ step 'Enable services'
 rc-update add acpid default
 rc-update add chronyd default
 rc-update add crond default
+rc-update add do-anchor-ip default
 rc-update add net.eth0 default
 rc-update add sshd default
 rc-update add net.lo boot
