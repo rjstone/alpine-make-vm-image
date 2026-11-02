@@ -115,7 +115,7 @@ From the Alpine `cloud-init` README:
 - ConfigDrive arrives as iso9660 and busybox `mount -t auto` won't autoload the module —
   hence both the `mount` package and `/etc/filesystems`.
 - `growpart`/`resizefs` need `cloud-utils-growpart`, `e2fsprogs-extra`, `parted`, `gptfdisk`
-  (`sgdisk`, for GPT) and `util-linux-misc` (`blockdev`, `lsblk`).
+  (`sgdisk`, for GPT) and `util-linux-misc` (`blockdev`); `lsblk` is its own package on Alpine.
 - Prefer `eudev` over mdev; upstream cloud-init is only tested against udev.
 - **`bash`** is required, despite nothing in the image itself needing it. DigitalOcean's
   vendor-data writes scripts into `/var/lib/cloud/scripts/per-instance/` that are written for
