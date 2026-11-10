@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - do-droplet-image
+      # Trial builds. Published under separate names (see env below), so a
+      # push here never replaces the production image or release.
+      - do-droplet-image-test
     paths:
       - "do-droplet/**"
       - "alpine-make-vm-image"
@@ -18,6 +21,11 @@ jobs:
   build-alpine:
     name: Build DO Droplet image
     runs-on: ubuntu-latest
+    env:
+      # Only the do-droplet-image branch publishes the production release and
+      # DigitalOcean image; every other ref uses the -test names.
+      RELEASE_TAG: ${{ github.ref_name == 'do-droplet-image' && 'do-droplet-image-latest' || 'do-droplet-image-test-latest' }}
+      DO_IMAGE_NAME: ${{ github.ref_name == 'do-droplet-image' && 'alpine-do-droplet-latest' || 'alpine-do-droplet-test' }}
     permissions:
       # Needed by the publish step to create/update the rolling release.
       contents: write
@@ -39,6 +47,7 @@ jobs:
               --image-format qcow2 \
               --image-size 2G \
               --partition \
+              --bootloader grub \
               --serial-console \
               --repositories-file do-droplet/repositories \
               --packages "$(cat do-droplet/packages)" \
@@ -52,13 +61,14 @@ jobs:
         run: |
           set -eu
           # blkid: busybox's applet does not support -o/-s, so use util-linux's.
-          apk add --no-progress qemu-img e2fsprogs-extra blkid
+          apk add --no-progress qemu-img e2fsprogs-extra blkid sfdisk
           modprobe nbd max_part=16 2>/dev/null || true
           qemu-nbd --connect=/dev/nbd0 alpine-do.qcow2
           trap 'umount /mnt/tmp /mnt/dev 2>/dev/null; umount /mnt 2>/dev/null; qemu-nbd --disconnect /dev/nbd0' EXIT
           # Give the kernel a moment to scan the GPT.
-          for _ in $(seq 30); do [ -e /dev/nbd0p1 ] && break; sleep 1; done
-          mount /dev/nbd0p1 /mnt
+          # p1 is GRUB's BIOS boot partition, p2 the root filesystem.
+          for _ in $(seq 30); do [ -e /dev/nbd0p2 ] && break; sleep 1; done
+          mount /dev/nbd0p2 /mnt
 
           echo '--- runlevel entries in the image ---'
           find /mnt/etc/runlevels -mindepth 2 | sort
@@ -127,7 +137,24 @@ jobs:
           check 'machine-id is empty' \
               '! [ -s /mnt/etc/machine-id ]'
           check 'root filesystem is ext4' \
-              'blkid -o value -s TYPE /dev/nbd0p1 | grep -qx ext4'
+              'blkid -o value -s TYPE /dev/nbd0p2 | grep -qx ext4'
+
+          # GRUB, not extlinux: extlinux finds ldlinux.sys by block address,
+          # and a DigitalOcean snapshot restore evidently relays out the root
+          # filesystem, which left restored Droplets at "Boot error".
+          check 'p1 is a BIOS boot partition' \
+              'sfdisk --part-type /dev/nbd0 1 | grep -qix 21686148-6449-6E6F-744E-656564454649'
+          check 'GRUB boot code in the MBR' \
+              'dd if=/dev/nbd0 bs=440 count=1 2>/dev/null | grep -qa GRUB'
+          check 'GRUB core image in the BIOS boot partition' \
+              '[ -n "$(dd if=/dev/nbd0p1 bs=512 count=1 2>/dev/null | tr -d "\\000" | head -c 1)" ]'
+          root_uuid=$(blkid -o value -s UUID /dev/nbd0p2)
+          check 'grub.cfg boots the root filesystem by UUID' \
+              'grep -q "root=UUID=$root_uuid" /mnt/boot/grub/grub.cfg'
+          check 'grub.cfg sends the console to ttyS0' \
+              'grep -q "console=ttyS0" /mnt/boot/grub/grub.cfg'
+          check 'no extlinux left in the image' \
+              '! [ -e /mnt/boot/ldlinux.sys ]'
 
           # The image is installed by the HOST's apk, so the database on disk is
           # written in the host apk-tools' format. If the image itself pulls a
@@ -140,6 +167,81 @@ jobs:
               'chroot /mnt /sbin/apk info -e busybox >/dev/null 2>&1'
 
           exit $fail
+        shell: alpine.sh --root {0}
+
+      # Boot the image in QEMU (SeaBIOS, like DigitalOcean's KVM), then boot a
+      # copy whose root filesystem was rebuilt file by file, as a DigitalOcean
+      # snapshot restore appears to do: everything outside the filesystem is
+      # copied raw, the files land in different blocks. extlinux fails that
+      # second boot with "Boot error"; GRUB must pass both.
+      - name: Boot test (QEMU), as built and after a file-level copy
+        run: |
+          set -eu
+          apk add --no-progress qemu-system-x86_64 qemu-img e2fsprogs e2fsprogs-extra sfdisk \
+              util-linux-misc rsync
+          modprobe nbd max_part=16 2>/dev/null || true
+
+          boot() {  # label image format
+            log=$(mktemp)
+            echo "--- booting $1"
+            qemu-system-x86_64 -machine pc -accel kvm -accel tcg -m 1024 \
+                -display none -monitor none -serial "file:$log" -no-reboot \
+                -drive "file=$2,format=$3,if=virtio" &
+            pid=$!
+            result=timeout
+            for _ in $(seq 300); do
+              if grep -q 'is starting up' "$log"; then result=ok; break; fi
+              if grep -qE 'Boot error|Missing OS|Disk error|grub rescue|Kernel panic' "$log"; then
+                result=failed; break
+              fi
+              kill -0 "$pid" 2>/dev/null || { result=exited; break; }
+              sleep 1
+            done
+            kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+            if [ "$result" = ok ]; then
+              echo "ok: $1 reached OpenRC"
+            else
+              echo "FAIL: $1 ($result); serial log tail:"; tail -c 3000 "$log" | tr -d '\r'
+              return 1
+            fi
+          }
+
+          boot 'image as built' alpine-do.qcow2 qcow2
+
+          # Build the relaid-out copy.
+          qemu-img convert -O raw alpine-do.qcow2 orig.raw
+          truncate -s "$(stat -c %s orig.raw)" relaid.raw
+          start=$(partx -g -o START -n 2 orig.raw | tr -d ' ')
+          total=$(( $(stat -c %s orig.raw) / 512 ))
+          # Raw: MBR, primary GPT, BIOS boot partition, and the backup GPT.
+          dd if=orig.raw of=relaid.raw bs=512 count="$start" conv=notrunc status=none
+          dd if=orig.raw of=relaid.raw bs=512 skip=$((total - 33)) seek=$((total - 33)) \
+              conv=notrunc status=none
+          qemu-nbd --connect=/dev/nbd1 --format=raw orig.raw
+          qemu-nbd --connect=/dev/nbd2 --format=raw relaid.raw
+          trap 'umount /mnt/a /mnt/b 2>/dev/null; qemu-nbd --disconnect /dev/nbd1; qemu-nbd --disconnect /dev/nbd2' EXIT
+          for _ in $(seq 30); do [ -e /dev/nbd2p2 ] && [ -e /dev/nbd1p2 ] && break; sleep 1; done
+          uuid=$(blkid -o value -s UUID /dev/nbd1p2)
+          mkfs.ext4 -q -U "$uuid" -L root -O ^64bit -E nodiscard /dev/nbd2p2
+          # The partition's first 1 KiB (boot block, unused by ext4) is also kept.
+          dd if=/dev/nbd1p2 of=/dev/nbd2p2 bs=1024 count=1 conv=notrunc status=none
+          mkdir -p /mnt/a /mnt/b
+          mount -o ro /dev/nbd1p2 /mnt/a
+          mount /dev/nbd2p2 /mnt/b
+          # Occupy the start of the new filesystem first, so copied files
+          # cannot land in the blocks they had.
+          dd if=/dev/zero of=/mnt/b/.filler bs=1M count=64 status=none
+          rsync -aHAX --numeric-ids /mnt/a/ /mnt/b/
+          rm /mnt/b/.filler
+          umount /mnt/a /mnt/b
+          a=$(debugfs -R 'bmap /boot/vmlinuz-virt 0' /dev/nbd1p2 2>/dev/null)
+          b=$(debugfs -R 'bmap /boot/vmlinuz-virt 0' /dev/nbd2p2 2>/dev/null)
+          echo "first block of /boot/vmlinuz-virt: as built $a, copy $b"
+          if [ "$a" = "$b" ]; then echo "FAIL: the copy did not move files"; exit 1; fi
+          qemu-nbd --disconnect /dev/nbd1; qemu-nbd --disconnect /dev/nbd2; trap - EXIT
+
+          boot 'file-level copy' relaid.raw raw
+          rm -f orig.raw relaid.raw
         shell: alpine.sh --root {0}
 
       # The image is built by root inside the chroot; make it readable by the
@@ -179,7 +281,7 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: do-droplet-image-latest
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -eu
           # Name the asset with the build date so a downloaded file is
@@ -190,7 +292,7 @@ jobs:
             gh release edit "$TAG" --notes "Automated build from ${GITHUB_SHA}."
           else
             gh release create "$TAG" \
-                --title 'Latest DO Droplet image' \
+                --title "Latest DO Droplet image (${TAG})" \
                 --notes "Automated build from ${GITHUB_SHA}." \
                 --prerelease
           fi
@@ -212,8 +314,7 @@ jobs:
         env:
           DO_TOKEN: ${{ secrets.DO_IMG_UPLOAD_PAT }}
           DO_REGION: ${{ vars.DO_IMG_UPLOAD_REGION }}
-          DO_IMAGE_NAME: alpine-do-droplet-latest
-          TAG: do-droplet-image-latest
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -eu
 

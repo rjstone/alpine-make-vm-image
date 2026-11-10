@@ -40,6 +40,14 @@ From Alpine's `cloud-init` `README.Alpine`:
 - **BIOS + GPT** Droplets have historically booted SeaBIOS, so a UEFI-only image risks not
   booting at all. Confirmed: build BIOS mode with `--partition` (GPT satisfies DO's partition
   requirement).
+- **GRUB, not extlinux** (`--bootloader grub`). Droplets created from a snapshot of an
+  extlinux-booted Droplet stopped at "Boot error". That message is extlinux's boot sector
+  failing to find `ldlinux.sys` at the block address `extlinux --install` recorded: the MBR,
+  GPT and the partition's boot sector all survived, so the snapshot restore evidently rebuilt
+  the root filesystem file by file. GRUB keeps its core image in a 1 MiB BIOS boot partition
+  (p1, outside any filesystem) and reads `/boot` by path, the layout DO's own Ubuntu images
+  use. Root is p2 and stays last, so `growpart` still works. CI boots the image in QEMU, and
+  again after rebuilding its root filesystem file by file.
 - Also put `gcompat`, `libstdc++` in the base image, though they are optional.
 
 ## Work
@@ -112,6 +120,7 @@ and the `setup-alpine` aarch64 re-invocation. One build step remains:
         --image-format qcow2 \
         --image-size 2G \
         --partition \
+        --bootloader grub \
         --serial-console \
         --repositories-file do-droplet/repositories \
         --packages "$(cat do-droplet/packages)" \
@@ -122,7 +131,7 @@ and the `setup-alpine` aarch64 re-invocation. One build step remains:
   shell: alpine.sh --root {0}
 ```
 
-`--partition` gives GPT under BIOS boot. `--serial-console` wires ttyS0 for DO's recovery
+`--partition` gives GPT under BIOS boot; `--bootloader grub` adds the BIOS boot partition. `--serial-console` wires ttyS0 for DO's recovery
 console. 2G keeps the upload small — cloud-init `growpart` expands to the Droplet's 10/25 GiB
 on first boot.
 
