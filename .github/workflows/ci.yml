@@ -193,8 +193,10 @@ jobs:
       - name: Boot test (QEMU), as built and after a file-level copy
         run: |
           set -eu
+          # partx and blkid are util-linux subpackages; BusyBox has no partx, and
+          # its blkid does not support -o/-s.
           apk add --no-progress qemu-system-x86_64 qemu-img e2fsprogs e2fsprogs-extra sfdisk \
-              util-linux-misc rsync
+              partx blkid rsync
           modprobe nbd max_part=16 2>/dev/null || true
 
           boot() {  # label image format
