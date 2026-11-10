@@ -395,6 +395,7 @@ setup_grub() {
 	# Alpine's grub package installs /etc/default/grub; append our settings.
 	cat >> "$mnt"/etc/default/grub <<-EOF
 		GRUB_CMDLINE_LINUX_DEFAULT="$cmdline"
+		GRUB_DISABLE_OS_PROBER=true
 	EOF
 	if [ "$serial_port" ]; then
 		cat >> "$mnt"/etc/default/grub <<-EOF
