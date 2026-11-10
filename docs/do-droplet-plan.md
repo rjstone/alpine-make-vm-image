@@ -89,7 +89,11 @@ change the body:
 - keep the `rc.conf` `sed` block as-is.
 - `setup-devd udev` (eudev, per README.Alpine).
 - `setup-cloud-init` to register the cloud-init OpenRC services.
-- `sshd_config`: `UsePAM yes`, `PermitRootLogin prohibit-password`, `PasswordAuthentication no`.
+- `sshd_config`: `UsePAM yes`, `PermitRootLogin prohibit-password`, `PasswordAuthentication no`,
+  `KbdInteractiveAuthentication no` (with PAM, keyboard-interactive would otherwise still allow
+  password logins).
+- `/etc/ssh/sshd_config.d/10-crypto.conf` and `/etc/ssh/ssh_config.d/10-crypto.conf` (rootfs
+  overlay): `MACs -hmac-sha1*,umac-64*`, removing those MACs from OpenSSH's defaults.
 - services: `sshd`, `chronyd`, `crond`, `acpid`, `udev`, `net.eth0` default; `net.lo` boot.
 - final cleanup so the image ships stateless: `cloud-init clean --logs`, remove
   `/etc/ssh/ssh_host_*`, truncate `/etc/machine-id`.
@@ -146,6 +150,8 @@ failure modes that CI green would otherwise hide) — remount the built image wi
 - `/etc/cloud/cloud.cfg.d/01-datasource.cfg` exists and lists ConfigDrive first
 - `/etc/init.d/cloud-init-local` is in a runlevel (i.e. `setup-cloud-init` took effect)
 - `grep '^UsePAM yes' /etc/ssh/sshd_config`
+- the image's own `sshd -T` and `ssh -G` parse the config and report `passwordauthentication no`,
+  `kbdinteractiveauthentication no`, and no `hmac-sha1`/`umac-64` MACs
 - `/etc/ssh/ssh_host_*` absent, `/etc/machine-id` empty
 
 Additional CI/CD isn't covered here. Compressing the image as `.bz2` is recommended and

@@ -55,7 +55,7 @@ jobs:
           apk add --no-progress qemu-img e2fsprogs-extra blkid
           modprobe nbd max_part=16 2>/dev/null || true
           qemu-nbd --connect=/dev/nbd0 alpine-do.qcow2
-          trap 'umount /mnt 2>/dev/null; qemu-nbd --disconnect /dev/nbd0' EXIT
+          trap 'umount /mnt/tmp /mnt/dev 2>/dev/null; umount /mnt 2>/dev/null; qemu-nbd --disconnect /dev/nbd0' EXIT
           # Give the kernel a moment to scan the GPT.
           for _ in $(seq 30); do [ -e /dev/nbd0p1 ] && break; sleep 1; done
           mount /dev/nbd0p1 /mnt
@@ -91,6 +91,37 @@ jobs:
               '[ -x /mnt/bin/bash ]'
           check 'sshd_config has UsePAM yes' \
               'grep -q "^UsePAM yes" /mnt/etc/ssh/sshd_config'
+          # With UsePAM yes, keyboard-interactive would let PAM ask for a
+          # password even though PasswordAuthentication is off.
+          check 'sshd_config has PasswordAuthentication no' \
+              'grep -q "^PasswordAuthentication no" /mnt/etc/ssh/sshd_config'
+          check 'sshd_config has KbdInteractiveAuthentication no' \
+              'grep -q "^KbdInteractiveAuthentication no" /mnt/etc/ssh/sshd_config'
+          # Ask the image's own sshd and ssh for their effective config, after
+          # Include drop-ins and defaults. This also fails on a config sshd
+          # cannot parse, which would leave a new Droplet with no SSH at all.
+          # sshd -T needs a host key and the image must not ship one, so the
+          # key goes on a tmpfs over the image's /tmp; /dev is bound for
+          # /dev/null. Both are unmounted before the host-key check below.
+          sshd_bin=
+          for b in /usr/sbin/sshd.pam /usr/sbin/sshd; do
+              if [ -x "/mnt$b" ]; then sshd_bin=$b; break; fi
+          done
+          mount --bind /dev /mnt/dev
+          mount -t tmpfs tmpfs /mnt/tmp
+          sshd_eff=$(chroot /mnt /usr/bin/ssh-keygen -q -t ed25519 -N '' -f /tmp/ci-hostkey >/dev/null 2>&1 \
+              && chroot /mnt "${sshd_bin:-/usr/sbin/sshd}" -T -h /tmp/ci-hostkey 2>&1) || true
+          ssh_eff=$(chroot /mnt /usr/bin/ssh -G ci.invalid 2>&1) || true
+          umount /mnt/tmp /mnt/dev
+          eff() { printf '%s\n' "$1" | awk -v k="$2" '$1 == k { print $2; exit }'; }
+          check "image sshd (${sshd_bin:-not found}) parses its config" '[ -n "$(eff "$sshd_eff" port)" ]'
+          if [ -z "$(eff "$sshd_eff" port)" ]; then printf '%s\n' "$sshd_eff" | head -20; fi
+          check 'sshd effective: passwordauthentication no' '[ "$(eff "$sshd_eff" passwordauthentication)" = no ]'
+          check 'sshd effective: kbdinteractiveauthentication no' '[ "$(eff "$sshd_eff" kbdinteractiveauthentication)" = no ]'
+          check 'sshd effective MACs exclude hmac-sha1 and umac-64' \
+              'm=$(eff "$sshd_eff" macs); [ -n "$m" ] && ! echo "$m" | grep -qE "hmac-sha1|umac-64"'
+          check 'ssh client effective MACs exclude hmac-sha1 and umac-64' \
+              'm=$(eff "$ssh_eff" macs); [ -n "$m" ] && ! echo "$m" | grep -qE "hmac-sha1|umac-64"'
           check 'no baked-in SSH host keys' \
               '! ls /mnt/etc/ssh/ssh_host_* >/dev/null 2>&1'
           check 'machine-id is empty' \

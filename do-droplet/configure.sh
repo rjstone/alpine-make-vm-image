@@ -38,12 +38,27 @@ setup-cloud-init
 step 'Configure sshd'
 # cloud-init locks user passwords, and non-PAM sshd refuses key-based logins to
 # password-locked accounts, hence openssh-server-pam + UsePAM yes.
+# With UsePAM yes, PAM can still prompt for a password through
+# keyboard-interactive, bypassing PasswordAuthentication no (upstream's
+# sshd_config says as much), so turn KbdInteractiveAuthentication off too.
+# Lynis (SSH-7408) checks neither option, so the CI image test and mcp-vps
+# scripts/audit-host.sh check them instead.
 sed -Ei \
 	-e 's/^[# ]*(UsePAM).*/\1 yes/' \
 	-e 's/^[# ]*(PermitRootLogin).*/\1 prohibit-password/' \
 	-e 's/^[# ]*(PasswordAuthentication).*/\1 no/' \
+	-e 's/^[# ]*(KbdInteractiveAuthentication).*/\1 no/' \
 	/etc/ssh/sshd_config
+# The stock file has a commented "#KbdInteractiveAuthentication yes" for the sed
+# above to rewrite. If a future one does not, put the line first, where it is
+# global; appended at the end it could land inside a Match block.
+if ! grep -q '^KbdInteractiveAuthentication' /etc/ssh/sshd_config; then
+	{ echo 'KbdInteractiveAuthentication no'; cat /etc/ssh/sshd_config; } >/etc/ssh/sshd_config.new
+	mv /etc/ssh/sshd_config.new /etc/ssh/sshd_config
+fi
 grep -q '^UsePAM yes' /etc/ssh/sshd_config
+grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config
+grep -q '^KbdInteractiveAuthentication no' /etc/ssh/sshd_config
 
 step 'Enable services'
 rc-update add acpid default
