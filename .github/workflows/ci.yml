@@ -19,6 +19,18 @@ on:
       - ".github/ci/**"
   workflow_dispatch:
 
+# One run per ref at a time. Push builds publish a shared release asset and a
+# DigitalOcean image by name, and each run ends by deleting the other images
+# with that name, so overlapping push runs on a branch race: on 2026-11-11 a
+# newer run deleted an older run's image mid-transfer to sfo3 (not_found).
+# Queue push runs rather than cancel them, so none is killed mid-upload and
+# left half-imported; GitHub keeps only the newest waiting run per group.
+# Superseded pull_request runs only build and test, so cancel those. A PR's
+# ref (refs/pull/N/merge) never shares a group with a branch push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-alpine:
     name: Build DO Droplet image
