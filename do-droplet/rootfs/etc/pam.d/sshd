@@ -1,0 +1,14 @@
+#%PAM-1.0
+# Replaces the openssh-server-pam package's /etc/pam.d/sshd: the same stack plus
+# the first account line. On upgrade apk keeps this file and writes .apk-new.
+#
+# alpine, cloud-init's default user, is for the local console only (see
+# /etc/pam.d/login). Refuse it here too, independently of DenyUsers and the
+# Match block in /etc/ssh/sshd_config.d/20-deny-alpine.conf. sshd runs the
+# account stack for every login, public-key ones included (UsePAM yes).
+
+auth      include   base-auth
+account   required  pam_succeed_if.so quiet user != alpine
+account   include   base-account
+password  include   base-password
+session   include   base-session

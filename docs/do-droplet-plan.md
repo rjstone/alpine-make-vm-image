@@ -102,6 +102,11 @@ change the body:
   password logins).
 - `/etc/ssh/sshd_config.d/10-crypto.conf` and `/etc/ssh/ssh_config.d/10-crypto.conf` (rootfs
   overlay): `MACs -hmac-sha1*,umac-64*`, removing those MACs from OpenSSH's defaults.
+- login policy (rootfs overlay + `util-linux-login`, `/bin/login` pointed at it): Droplet SSH
+  keys on root (`disable_root: false`); `alpine` refused over SSH (`DenyUsers`, `Match`
+  without pubkey auth, PAM account rule in `/etc/pam.d/sshd`) but passwordless on tty/ttyS
+  consoles (`/etc/pam.d/login`, which also drops `nullok` so empty passwords fail). See
+  *Logging in* in `docs/README.md`.
 - services: `sshd`, `chronyd`, `crond`, `acpid`, `udev`, `net.eth0` default; `net.lo` boot.
 - final cleanup so the image ships stateless: `cloud-init clean --logs`, remove
   `/etc/ssh/ssh_host_*`, truncate `/etc/machine-id`.

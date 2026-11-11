@@ -10,11 +10,13 @@ on:
       - "do-droplet/**"
       - "alpine-make-vm-image"
       - ".github/workflows/ci.yml"
+      - ".github/ci/**"
   pull_request:
     paths:
       - "do-droplet/**"
       - "alpine-make-vm-image"
       - ".github/workflows/ci.yml"
+      - ".github/ci/**"
   workflow_dispatch:
 
 jobs:
@@ -66,7 +68,8 @@ jobs:
           qemu-nbd --connect=/dev/nbd0 alpine-do.qcow2
           # Each step "|| true": under set -e a failing command in an EXIT trap
           # (here umount of something already unmounted) makes the step exit 1.
-          trap 'umount /mnt/tmp 2>/dev/null || true; umount /mnt/dev 2>/dev/null || true
+          trap 'umount /mnt/etc/shadow 2>/dev/null || true; umount /mnt/etc/passwd 2>/dev/null || true
+                umount /mnt/tmp 2>/dev/null || true; umount /mnt/dev 2>/dev/null || true
                 umount /mnt 2>/dev/null || true; qemu-nbd --disconnect /dev/nbd0 || true' EXIT
           # Give the kernel a moment to scan the GPT.
           # p1 is GRUB's BIOS boot partition, p2 the root filesystem.
@@ -125,6 +128,11 @@ jobs:
           sshd_eff=$(chroot /mnt /usr/bin/ssh-keygen -q -t ed25519 -N '' -f /tmp/ci-hostkey >/dev/null 2>&1 \
               && chroot /mnt "${sshd_bin:-/usr/sbin/sshd}" -T -h /tmp/ci-hostkey 2>&1) || true
           ssh_eff=$(chroot /mnt /usr/bin/ssh -G ci.invalid 2>&1) || true
+          # Effective config for a connection as alpine and as root, after Match.
+          sshd_for() { chroot /mnt "${sshd_bin:-/usr/sbin/sshd}" -T -h /tmp/ci-hostkey \
+              -C "user=$1,host=ci.invalid,addr=192.0.2.1" 2>&1 || true; }
+          sshd_alpine=$(sshd_for alpine)
+          sshd_root=$(sshd_for root)
           umount /mnt/tmp /mnt/dev
           eff() { printf '%s\n' "$1" | awk -v k="$2" '$1 == k { print $2; exit }'; }
           check "image sshd (${sshd_bin:-not found}) parses its config" '[ -n "$(eff "$sshd_eff" port)" ]'
@@ -133,6 +141,27 @@ jobs:
           check 'sshd effective: kbdinteractiveauthentication no' '[ "$(eff "$sshd_eff" kbdinteractiveauthentication)" = no ]'
           check 'sshd effective MACs exclude hmac-sha1 and umac-64' \
               'm=$(eff "$sshd_eff" macs); [ -n "$m" ] && ! echo "$m" | grep -qE "hmac-sha1|umac-64"'
+          # Login policy: the Droplet's SSH keys go to root (key-only); alpine,
+          # cloud-init's default user with passwordless doas, is console-only.
+          # SSH refuses alpine three independent ways: DenyUsers, no pubkey
+          # auth or authorized_keys file (Match), and the PAM account stack
+          # (tested further down). Root's Match-free result shows the Match
+          # block did not leak into the rest of sshd_config.
+          check 'cloud-init puts the Droplet SSH keys on root (disable_root: false)' \
+              'grep -qx "disable_root: false" /mnt/etc/cloud/cloud.cfg.d/10-root-ssh-keys.cfg'
+          check 'sshd effective: denyusers alpine' \
+              'printf "%s\n" "$sshd_alpine" | grep -qx "denyusers alpine"'
+          check 'sshd effective for alpine: pubkeyauthentication no' \
+              '[ "$(eff "$sshd_alpine" pubkeyauthentication)" = no ]'
+          check 'sshd effective for alpine: authorizedkeysfile none' \
+              '[ "$(eff "$sshd_alpine" authorizedkeysfile)" = none ]'
+          check 'sshd effective for root: pubkeyauthentication yes' \
+              '[ "$(eff "$sshd_root" pubkeyauthentication)" = yes ]'
+          check 'sshd effective for root: keys only (prohibit-password)' \
+              'case "$(eff "$sshd_root" permitrootlogin)" in prohibit-password|without-password) true;; *) false;; esac'
+          # getty runs /bin/login; busybox's login ignores /etc/pam.d/login.
+          check '/bin/login is util-linux (PAM), not busybox' \
+              'l=$(chroot /mnt readlink -f /bin/login); [ -n "$l" ] && [ "${l##*/}" != busybox ]'
           # The image installs openssh-server-pam only, which does not pull
           # in the client; the ssh_config.d drop-in is for a client added later.
           if [ -x /mnt/usr/bin/ssh ]; then
@@ -171,6 +200,44 @@ jobs:
               'grep -q "console=ttyS0" /mnt/boot/grub/grub.cfg'
           check 'no extlinux left in the image' \
               '! [ -e /mnt/boot/ldlinux.sys ]'
+
+          # Run the image's own PAM stacks (its libpam, modules, pam.d files)
+          # with .github/ci/pamcheck.c: built here, run in the chroot as login
+          # or sshd would. cloud-init creates alpine on first boot, so the test
+          # binds a passwd and shadow over the image's with an alpine entry
+          # (password locked, as cloud-init leaves it), and rewrites root's
+          # password field per case. ci-test-pw's hash is a test fixture.
+          apk add --no-progress gcc musl-dev linux-pam-dev
+          mount --bind /dev /mnt/dev
+          mount -t tmpfs tmpfs /mnt/tmp
+          gcc -Wall -O2 -o /mnt/tmp/pamcheck .github/ci/pamcheck.c -lpam
+          root_pw_state=$(awk -F: '$1 == "root" { p = substr($2, 1, 1)
+              print ($2 == "" ? "EMPTY" : (p == "*" || p == "!") ? "locked" : "set") }' /mnt/etc/shadow)
+          echo "root's password in the image as built: $root_pw_state"
+          { cat /mnt/etc/passwd; echo 'alpine:x:1000:1000:Alpine:/home/alpine:/bin/ash'; } >/mnt/tmp/passwd
+          { cat /mnt/etc/shadow; echo 'alpine:!:20000:0:99999:7:::'; } >/mnt/tmp/shadow.base
+          cp /mnt/tmp/shadow.base /mnt/tmp/shadow
+          chmod 0640 /mnt/tmp/shadow
+          mount --bind /mnt/tmp/passwd /mnt/etc/passwd
+          mount --bind /mnt/tmp/shadow /mnt/etc/shadow
+          # Rewrites in place (same inode), so the bind mount sees each change.
+          root_pw() { awk -F: -v OFS=: -v pw="$1" '$1 == "root" { $2 = pw } 1' \
+              /mnt/tmp/shadow.base >/mnt/tmp/shadow; }
+          pam() { want=$1; label=$2; shift 2
+              if chroot /mnt /tmp/pamcheck "$@"; then got=allow; else got=deny; fi
+              check "PAM: $label -> $want" '[ "$got" = "$want" ]'; }
+          pam allow 'alpine, console tty1, no password' auth login alpine /dev/tty1 ''
+          pam allow 'alpine, serial ttyS0, no password' auth login alpine /dev/ttyS0 ''
+          pam deny 'alpine, pseudo-terminal' auth login alpine /dev/pts/0 ''
+          pam deny 'alpine, SSH account stack' acct sshd alpine -
+          pam allow 'root, SSH account stack' acct sshd root -
+          pam deny "root, console, image as built ($root_pw_state)" auth login root /dev/tty1 ''
+          root_pw ''
+          pam deny 'root, console, EMPTY password' auth login root /dev/tty1 ''
+          root_pw '$6$cisalt$SoqDHc2D6/wLBqlHJxyNZe.Axk8T/0u678k.aUH1unliKFggWYg.1W9RpHPP9Q87yYrL5aGsiAykYvEIRrODR.'
+          pam allow 'root, console, password set and given' auth login root /dev/tty1 ci-test-pw
+          pam deny 'root, console, wrong password' auth login root /dev/tty1 wrong
+          umount /mnt/etc/shadow /mnt/etc/passwd /mnt/tmp /mnt/dev
 
           # The image is installed by the HOST's apk, so the database on disk is
           # written in the host apk-tools' format. If the image itself pulls a

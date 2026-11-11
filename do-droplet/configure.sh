@@ -60,6 +60,17 @@ grep -q '^UsePAM yes' /etc/ssh/sshd_config
 grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config
 grep -q '^KbdInteractiveAuthentication no' /etc/ssh/sshd_config
 
+step 'Use the PAM-enabled login on the consoles'
+# getty on tty1 and ttyS0 runs /bin/login. util-linux is built with
+# --prefix=/usr, so its PAM login can land under /usr while /bin/login stays a
+# link to busybox, whose login ignores PAM: /etc/pam.d/login (passwordless
+# alpine on the console, no empty passwords) would silently never apply. Point
+# /bin/login at util-linux's wherever it is; CI re-checks this on every build.
+ul_login=/$(apk info -L util-linux-login | grep -xE '(usr/)?s?bin/login' | head -n 1)
+[ -x "$ul_login" ]
+[ "$ul_login" = /bin/login ] || ln -sf "$ul_login" /bin/login
+[ "$(readlink -f /bin/login)" = "$(readlink -f "$ul_login")" ]
+
 step 'Enable services'
 rc-update add acpid default
 rc-update add chronyd default
