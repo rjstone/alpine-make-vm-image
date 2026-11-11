@@ -97,6 +97,27 @@ before it exists.
   `[ ConfigDrive, DigitalOcean, None ]` instead, in
   `do-droplet/rootfs/etc/cloud/cloud.cfg.d/01-datasource.cfg`.
 
+## Logging in
+
+| Account | SSH | Console (DO web console on tty1, serial on ttyS0) |
+|---|---|---|
+| `root` | **Yes, key only.** The Droplet's SSH keys go here (`disable_root: false`). | Only once a password is set. The image ships root's password field as `*` (no password; not `!`, so keys keep working even under non-PAM sshd); empty or locked passwords are refused. |
+| `alpine` (cloud-init's default user, passwordless `doas`) | **Never.** `DenyUsers`, no pubkey auth or `authorized_keys` file (`Match`), and a PAM account rule each refuse it. | **Yes, no password**, even if one is set later (by design). Its password starts locked, so `su alpine` fails until one is set. |
+
+So a new Droplet works over SSH as root with the key you chose, and the web console works
+as `alpine` even if you lose that key: `doas passwd root` from there sets a root password,
+and you can add keys from there too. Anyone who can open the web console can already
+rebuild the Droplet or boot the recovery ISO, so the passwordless console login adds no
+real exposure. Files: `etc/cloud/cloud.cfg.d/10-root-ssh-keys.cfg`,
+`etc/ssh/sshd_config.d/20-deny-alpine.conf`, `etc/pam.d/{login,sshd}` under
+`do-droplet/rootfs/`. `/bin/login` is util-linux's PAM login (busybox's ignores PAM); CI
+checks it, the effective `sshd -T` config per user, and the PAM stacks themselves
+(`.github/ci/pamcheck.c`).
+
+To drop the console convenience, delete the `pam_succeed_if` line from `/etc/pam.d/login`.
+To stop cloud-init creating `alpine` at all, give user-data a `users:` list without
+`- default`.
+
 ## The requirements that actually drive the build
 
 From the DigitalOcean page:

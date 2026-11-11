@@ -38,12 +38,48 @@ setup-cloud-init
 step 'Configure sshd'
 # cloud-init locks user passwords, and non-PAM sshd refuses key-based logins to
 # password-locked accounts, hence openssh-server-pam + UsePAM yes.
+# With UsePAM yes, PAM can still prompt for a password through
+# keyboard-interactive, bypassing PasswordAuthentication no (upstream's
+# sshd_config says as much), so turn KbdInteractiveAuthentication off too.
+# Lynis (SSH-7408) checks neither option, so the CI image test and mcp-vps
+# scripts/audit-host.sh check them instead.
 sed -Ei \
 	-e 's/^[# ]*(UsePAM).*/\1 yes/' \
 	-e 's/^[# ]*(PermitRootLogin).*/\1 prohibit-password/' \
 	-e 's/^[# ]*(PasswordAuthentication).*/\1 no/' \
+	-e 's/^[# ]*(KbdInteractiveAuthentication).*/\1 no/' \
 	/etc/ssh/sshd_config
+# The stock file has a commented "#KbdInteractiveAuthentication yes" for the sed
+# above to rewrite. If a future one does not, put the line first, where it is
+# global; appended at the end it could land inside a Match block.
+if ! grep -q '^KbdInteractiveAuthentication' /etc/ssh/sshd_config; then
+	{ echo 'KbdInteractiveAuthentication no'; cat /etc/ssh/sshd_config; } >/etc/ssh/sshd_config.new
+	mv /etc/ssh/sshd_config.new /etc/ssh/sshd_config
+fi
 grep -q '^UsePAM yes' /etc/ssh/sshd_config
+grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config
+grep -q '^KbdInteractiveAuthentication no' /etc/ssh/sshd_config
+
+step 'Use the PAM-enabled login on the consoles'
+# getty on tty1 and ttyS0 runs /bin/login. util-linux is built with
+# --prefix=/usr, so its PAM login can land under /usr while /bin/login stays a
+# link to busybox, whose login ignores PAM: /etc/pam.d/login (passwordless
+# alpine on the console, no empty passwords) would silently never apply. Point
+# /bin/login at util-linux's wherever it is; CI re-checks this on every build.
+ul_login=/$(apk info -L util-linux-login | grep -xE '(usr/)?s?bin/login' | head -n 1)
+[ -x "$ul_login" ]
+[ "$ul_login" = /bin/login ] || ln -sf "$ul_login" /bin/login
+[ "$(readlink -f /bin/login)" = "$(readlink -f "$ul_login")" ]
+
+step "Lock root's password"
+# The base image ships root with an EMPTY password field, which audit tools
+# flag and any PAM stack with nullok would accept. "*" is no valid hash, so
+# password logins fail. It is not "!": on Linux, non-PAM sshd treats a leading
+# "!" as a locked account and refuses even key logins; sshd here uses PAM, but
+# "*" keeps root's SSH keys working either way. To log in as root on the
+# console, set a password from the alpine console: doas passwd root.
+sed -Ei 's/^root:[^:]*:/root:*:/' /etc/shadow
+grep -q '^root:\*:' /etc/shadow
 
 step 'Enable services'
 rc-update add acpid default

@@ -3,21 +3,31 @@ on:
   push:
     branches:
       - do-droplet-image
+      # Trial builds. Published under separate names (see env below), so a
+      # push here never replaces the production image or release.
+      - do-droplet-image-test
     paths:
       - "do-droplet/**"
       - "alpine-make-vm-image"
       - ".github/workflows/ci.yml"
+      - ".github/ci/**"
   pull_request:
     paths:
       - "do-droplet/**"
       - "alpine-make-vm-image"
       - ".github/workflows/ci.yml"
+      - ".github/ci/**"
   workflow_dispatch:
 
 jobs:
   build-alpine:
     name: Build DO Droplet image
     runs-on: ubuntu-latest
+    env:
+      # Only the do-droplet-image branch publishes the production release and
+      # DigitalOcean image; every other ref uses the -test names.
+      RELEASE_TAG: ${{ github.ref_name == 'do-droplet-image' && 'do-droplet-image-latest' || 'do-droplet-image-test-latest' }}
+      DO_IMAGE_NAME: ${{ github.ref_name == 'do-droplet-image' && 'alpine-do-droplet-latest' || 'alpine-do-droplet-test' }}
     permissions:
       # Needed by the publish step to create/update the rolling release.
       contents: write
@@ -39,6 +49,7 @@ jobs:
               --image-format qcow2 \
               --image-size 2G \
               --partition \
+              --bootloader grub \
               --serial-console \
               --repositories-file do-droplet/repositories \
               --packages "$(cat do-droplet/packages)" \
@@ -52,13 +63,18 @@ jobs:
         run: |
           set -eu
           # blkid: busybox's applet does not support -o/-s, so use util-linux's.
-          apk add --no-progress qemu-img e2fsprogs-extra blkid
+          apk add --no-progress qemu-img e2fsprogs-extra blkid sfdisk
           modprobe nbd max_part=16 2>/dev/null || true
           qemu-nbd --connect=/dev/nbd0 alpine-do.qcow2
-          trap 'umount /mnt 2>/dev/null; qemu-nbd --disconnect /dev/nbd0' EXIT
+          # Each step "|| true": under set -e a failing command in an EXIT trap
+          # (here umount of something already unmounted) makes the step exit 1.
+          trap 'umount /mnt/etc/shadow 2>/dev/null || true; umount /mnt/etc/passwd 2>/dev/null || true
+                umount /mnt/tmp 2>/dev/null || true; umount /mnt/dev 2>/dev/null || true
+                umount /mnt 2>/dev/null || true; qemu-nbd --disconnect /dev/nbd0 || true' EXIT
           # Give the kernel a moment to scan the GPT.
-          for _ in $(seq 30); do [ -e /dev/nbd0p1 ] && break; sleep 1; done
-          mount /dev/nbd0p1 /mnt
+          # p1 is GRUB's BIOS boot partition, p2 the root filesystem.
+          for _ in $(seq 30); do [ -e /dev/nbd0p2 ] && break; sleep 1; done
+          mount /dev/nbd0p2 /mnt
 
           echo '--- runlevel entries in the image ---'
           find /mnt/etc/runlevels -mindepth 2 | sort
@@ -91,12 +107,141 @@ jobs:
               '[ -x /mnt/bin/bash ]'
           check 'sshd_config has UsePAM yes' \
               'grep -q "^UsePAM yes" /mnt/etc/ssh/sshd_config'
+          # With UsePAM yes, keyboard-interactive would let PAM ask for a
+          # password even though PasswordAuthentication is off.
+          check 'sshd_config has PasswordAuthentication no' \
+              'grep -q "^PasswordAuthentication no" /mnt/etc/ssh/sshd_config'
+          check 'sshd_config has KbdInteractiveAuthentication no' \
+              'grep -q "^KbdInteractiveAuthentication no" /mnt/etc/ssh/sshd_config'
+          # Ask the image's own sshd and ssh for their effective config, after
+          # Include drop-ins and defaults. This also fails on a config sshd
+          # cannot parse, which would leave a new Droplet with no SSH at all.
+          # sshd -T needs a host key and the image must not ship one, so the
+          # key goes on a tmpfs over the image's /tmp; /dev is bound for
+          # /dev/null. Both are unmounted before the host-key check below.
+          sshd_bin=
+          for b in /usr/sbin/sshd.pam /usr/sbin/sshd; do
+              if [ -x "/mnt$b" ]; then sshd_bin=$b; break; fi
+          done
+          mount --bind /dev /mnt/dev
+          mount -t tmpfs tmpfs /mnt/tmp
+          sshd_eff=$(chroot /mnt /usr/bin/ssh-keygen -q -t ed25519 -N '' -f /tmp/ci-hostkey >/dev/null 2>&1 \
+              && chroot /mnt "${sshd_bin:-/usr/sbin/sshd}" -T -h /tmp/ci-hostkey 2>&1) || true
+          ssh_eff=$(chroot /mnt /usr/bin/ssh -G ci.invalid 2>&1) || true
+          # Effective config for a connection as alpine and as root, after Match.
+          sshd_for() { chroot /mnt "${sshd_bin:-/usr/sbin/sshd}" -T -h /tmp/ci-hostkey \
+              -C "user=$1,host=ci.invalid,addr=192.0.2.1" 2>&1 || true; }
+          sshd_alpine=$(sshd_for alpine)
+          sshd_root=$(sshd_for root)
+          umount /mnt/tmp /mnt/dev
+          eff() { printf '%s\n' "$1" | awk -v k="$2" '$1 == k { print $2; exit }'; }
+          check "image sshd (${sshd_bin:-not found}) parses its config" '[ -n "$(eff "$sshd_eff" port)" ]'
+          if [ -z "$(eff "$sshd_eff" port)" ]; then printf '%s\n' "$sshd_eff" | head -20; fi
+          check 'sshd effective: passwordauthentication no' '[ "$(eff "$sshd_eff" passwordauthentication)" = no ]'
+          check 'sshd effective: kbdinteractiveauthentication no' '[ "$(eff "$sshd_eff" kbdinteractiveauthentication)" = no ]'
+          check 'sshd effective MACs exclude hmac-sha1 and umac-64' \
+              'm=$(eff "$sshd_eff" macs); [ -n "$m" ] && ! echo "$m" | grep -qE "hmac-sha1|umac-64"'
+          # Login policy: the Droplet's SSH keys go to root (key-only); alpine,
+          # cloud-init's default user with passwordless doas, is console-only.
+          # SSH refuses alpine three independent ways: DenyUsers, no pubkey
+          # auth or authorized_keys file (Match), and the PAM account stack
+          # (tested further down). Root's Match-free result shows the Match
+          # block did not leak into the rest of sshd_config.
+          check 'cloud-init puts the Droplet SSH keys on root (disable_root: false)' \
+              'grep -qx "disable_root: false" /mnt/etc/cloud/cloud.cfg.d/10-root-ssh-keys.cfg'
+          check 'sshd effective: denyusers alpine' \
+              'printf "%s\n" "$sshd_alpine" | grep -qx "denyusers alpine"'
+          check 'sshd effective for alpine: pubkeyauthentication no' \
+              '[ "$(eff "$sshd_alpine" pubkeyauthentication)" = no ]'
+          check 'sshd effective for alpine: authorizedkeysfile none' \
+              '[ "$(eff "$sshd_alpine" authorizedkeysfile)" = none ]'
+          check 'sshd effective for root: pubkeyauthentication yes' \
+              '[ "$(eff "$sshd_root" pubkeyauthentication)" = yes ]'
+          check 'sshd effective for root: keys only (prohibit-password)' \
+              'case "$(eff "$sshd_root" permitrootlogin)" in prohibit-password|without-password) true;; *) false;; esac'
+          # getty runs /bin/login; busybox's login ignores /etc/pam.d/login.
+          check '/bin/login is util-linux (PAM), not busybox' \
+              'l=$(chroot /mnt readlink -f /bin/login); [ -n "$l" ] && [ "${l##*/}" != busybox ]'
+          # The image installs openssh-server-pam only, which does not pull
+          # in the client; the ssh_config.d drop-in is for a client added later.
+          if [ -x /mnt/usr/bin/ssh ]; then
+              check 'ssh client effective MACs exclude hmac-sha1 and umac-64' \
+                  'm=$(eff "$ssh_eff" macs); [ -n "$m" ] && ! echo "$m" | grep -qE "hmac-sha1|umac-64"'
+          else
+              echo "ok: no ssh client in the image (its MACs drop-in applies if one is installed)"
+          fi
           check 'no baked-in SSH host keys' \
               '! ls /mnt/etc/ssh/ssh_host_* >/dev/null 2>&1'
           check 'machine-id is empty' \
               '! [ -s /mnt/etc/machine-id ]'
           check 'root filesystem is ext4' \
-              'blkid -o value -s TYPE /dev/nbd0p1 | grep -qx ext4'
+              'blkid -o value -s TYPE /dev/nbd0p2 | grep -qx ext4'
+
+          # GRUB, not extlinux: extlinux finds ldlinux.sys by block address,
+          # and a DigitalOcean snapshot restore evidently relays out the root
+          # filesystem, which left restored Droplets at "Boot error".
+          check 'p1 is a BIOS boot partition' \
+              'sfdisk --part-type /dev/nbd0 1 | grep -qix 21686148-6449-6E6F-744E-656564454649'
+          # Informational: GRUB's boot.img carries the string "GRUB ". Run 30
+          # did not find it although grub-install reported success, so dump the
+          # boot code instead of failing; the QEMU boot test below decides.
+          if dd if=/dev/nbd0 bs=440 count=1 2>/dev/null | tr -c 'A-Za-z' '\n' | grep -qx GRUB; then
+              echo "ok: GRUB boot code in the MBR"
+          else
+              echo "note: no 'GRUB' string in the MBR boot code; first 440 bytes:"
+              dd if=/dev/nbd0 bs=440 count=1 2>/dev/null | od -A x -t x1z -v | head -30
+          fi
+          check 'GRUB core image in the BIOS boot partition' \
+              '[ -n "$(dd if=/dev/nbd0p1 bs=512 count=1 2>/dev/null | tr -d "\\000" | head -c 1)" ]'
+          root_uuid=$(blkid -o value -s UUID /dev/nbd0p2)
+          check 'grub.cfg boots the root filesystem by UUID' \
+              'grep -q "root=UUID=$root_uuid" /mnt/boot/grub/grub.cfg'
+          check 'grub.cfg sends the console to ttyS0' \
+              'grep -q "console=ttyS0" /mnt/boot/grub/grub.cfg'
+          check 'no extlinux left in the image' \
+              '! [ -e /mnt/boot/ldlinux.sys ]'
+
+          # Run the image's own PAM stacks (its libpam, modules, pam.d files)
+          # with .github/ci/pamcheck.c: built here, run in the chroot as login
+          # or sshd would. cloud-init creates alpine on first boot, so the test
+          # binds a passwd and shadow over the image's with an alpine entry
+          # (password locked, as cloud-init leaves it), and rewrites root's
+          # password field per case. ci-test-pw's hash is a test fixture.
+          apk add --no-progress gcc musl-dev linux-pam-dev
+          mount --bind /dev /mnt/dev
+          mount -t tmpfs tmpfs /mnt/tmp
+          gcc -Wall -O2 -o /mnt/tmp/pamcheck .github/ci/pamcheck.c -lpam
+          root_pw_state=$(awk -F: '$1 == "root" { p = substr($2, 1, 1)
+              print ($2 == "" ? "EMPTY" : (p == "*" || p == "!") ? "locked" : "set") }' /mnt/etc/shadow)
+          echo "root's password in the image as built: $root_pw_state"
+          # configure.sh sets "*": no valid hash, but not "!", which non-PAM
+          # sshd would read as a locked account and refuse even key logins.
+          check 'root password field is "*" (no password, keys still work)' \
+              'grep -q "^root:\*:" /mnt/etc/shadow'
+          { cat /mnt/etc/passwd; echo 'alpine:x:1000:1000:Alpine:/home/alpine:/bin/ash'; } >/mnt/tmp/passwd
+          { cat /mnt/etc/shadow; echo 'alpine:!:20000:0:99999:7:::'; } >/mnt/tmp/shadow.base
+          cp /mnt/tmp/shadow.base /mnt/tmp/shadow
+          chmod 0640 /mnt/tmp/shadow
+          mount --bind /mnt/tmp/passwd /mnt/etc/passwd
+          mount --bind /mnt/tmp/shadow /mnt/etc/shadow
+          # Rewrites in place (same inode), so the bind mount sees each change.
+          root_pw() { awk -F: -v OFS=: -v pw="$1" '$1 == "root" { $2 = pw } 1' \
+              /mnt/tmp/shadow.base >/mnt/tmp/shadow; }
+          pam() { want=$1; label=$2; shift 2
+              if chroot /mnt /tmp/pamcheck "$@"; then got=allow; else got=deny; fi
+              check "PAM: $label -> $want" '[ "$got" = "$want" ]'; }
+          pam allow 'alpine, console tty1, no password' auth login alpine /dev/tty1 ''
+          pam allow 'alpine, serial ttyS0, no password' auth login alpine /dev/ttyS0 ''
+          pam deny 'alpine, pseudo-terminal' auth login alpine /dev/pts/0 ''
+          pam deny 'alpine, SSH account stack' acct sshd alpine -
+          pam allow "root, SSH account stack, image's own password ($root_pw_state)" acct sshd root -
+          pam deny "root, console, image as built ($root_pw_state)" auth login root /dev/tty1 ''
+          root_pw ''
+          pam deny 'root, console, EMPTY password' auth login root /dev/tty1 ''
+          root_pw '$6$cisalt$SoqDHc2D6/wLBqlHJxyNZe.Axk8T/0u678k.aUH1unliKFggWYg.1W9RpHPP9Q87yYrL5aGsiAykYvEIRrODR.'
+          pam allow 'root, console, password set and given' auth login root /dev/tty1 ci-test-pw
+          pam deny 'root, console, wrong password' auth login root /dev/tty1 wrong
+          umount /mnt/etc/shadow /mnt/etc/passwd /mnt/tmp /mnt/dev
 
           # The image is installed by the HOST's apk, so the database on disk is
           # written in the host apk-tools' format. If the image itself pulls a
@@ -109,6 +254,84 @@ jobs:
               'chroot /mnt /sbin/apk info -e busybox >/dev/null 2>&1'
 
           exit $fail
+        shell: alpine.sh --root {0}
+
+      # Boot the image in QEMU (SeaBIOS, like DigitalOcean's KVM), then boot a
+      # copy whose root filesystem was rebuilt file by file, as a DigitalOcean
+      # snapshot restore appears to do: everything outside the filesystem is
+      # copied raw, the files land in different blocks. extlinux fails that
+      # second boot with "Boot error"; GRUB must pass both.
+      - name: Boot test (QEMU), as built and after a file-level copy
+        run: |
+          set -eu
+          # partx and blkid are util-linux subpackages; BusyBox has no partx, and
+          # its blkid does not support -o/-s.
+          apk add --no-progress qemu-system-x86_64 qemu-img e2fsprogs e2fsprogs-extra sfdisk \
+              partx blkid rsync
+          modprobe nbd max_part=16 2>/dev/null || true
+
+          boot() {  # label image format
+            log=$(mktemp)
+            echo "--- booting $1"
+            qemu-system-x86_64 -machine pc -accel kvm -accel tcg -m 1024 \
+                -display none -monitor none -serial "file:$log" -no-reboot \
+                -drive "file=$2,format=$3,if=virtio" &
+            pid=$!
+            result=timeout
+            for _ in $(seq 300); do
+              if grep -q 'is starting up' "$log"; then result=ok; break; fi
+              if grep -qE 'Boot error|Missing OS|Disk error|grub rescue|Kernel panic' "$log"; then
+                result=failed; break
+              fi
+              kill -0 "$pid" 2>/dev/null || { result=exited; break; }
+              sleep 1
+            done
+            kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+            if [ "$result" = ok ]; then
+              echo "ok: $1 reached OpenRC"
+            else
+              echo "FAIL: $1 ($result); serial log tail:"; tail -c 3000 "$log" | tr -d '\r'
+              return 1
+            fi
+          }
+
+          boot 'image as built' alpine-do.qcow2 qcow2
+
+          # Build the relaid-out copy.
+          qemu-img convert -O raw alpine-do.qcow2 orig.raw
+          truncate -s "$(stat -c %s orig.raw)" relaid.raw
+          start=$(partx -g -o START -n 2 orig.raw | tr -d ' ')
+          total=$(( $(stat -c %s orig.raw) / 512 ))
+          # Raw: MBR, primary GPT, BIOS boot partition, and the backup GPT.
+          dd if=orig.raw of=relaid.raw bs=512 count="$start" conv=notrunc status=none
+          dd if=orig.raw of=relaid.raw bs=512 skip=$((total - 33)) seek=$((total - 33)) \
+              conv=notrunc status=none
+          qemu-nbd --connect=/dev/nbd1 --format=raw orig.raw
+          qemu-nbd --connect=/dev/nbd2 --format=raw relaid.raw
+          trap 'umount /mnt/a 2>/dev/null || true; umount /mnt/b 2>/dev/null || true
+                qemu-nbd --disconnect /dev/nbd1 || true; qemu-nbd --disconnect /dev/nbd2 || true' EXIT
+          for _ in $(seq 30); do [ -e /dev/nbd2p2 ] && [ -e /dev/nbd1p2 ] && break; sleep 1; done
+          uuid=$(blkid -o value -s UUID /dev/nbd1p2)
+          mkfs.ext4 -q -U "$uuid" -L root -O ^64bit -E nodiscard /dev/nbd2p2
+          # The partition's first 1 KiB (boot block, unused by ext4) is also kept.
+          dd if=/dev/nbd1p2 of=/dev/nbd2p2 bs=1024 count=1 conv=notrunc status=none
+          mkdir -p /mnt/a /mnt/b
+          mount -o ro /dev/nbd1p2 /mnt/a
+          mount /dev/nbd2p2 /mnt/b
+          # Occupy the start of the new filesystem first, so copied files
+          # cannot land in the blocks they had.
+          dd if=/dev/zero of=/mnt/b/.filler bs=1M count=64 status=none
+          rsync -aHAX --numeric-ids /mnt/a/ /mnt/b/
+          rm /mnt/b/.filler
+          umount /mnt/a /mnt/b
+          a=$(debugfs -R 'bmap /boot/vmlinuz-virt 0' /dev/nbd1p2 2>/dev/null)
+          b=$(debugfs -R 'bmap /boot/vmlinuz-virt 0' /dev/nbd2p2 2>/dev/null)
+          echo "first block of /boot/vmlinuz-virt: as built $a, copy $b"
+          if [ "$a" = "$b" ]; then echo "FAIL: the copy did not move files"; exit 1; fi
+          qemu-nbd --disconnect /dev/nbd1; qemu-nbd --disconnect /dev/nbd2; trap - EXIT
+
+          boot 'file-level copy' relaid.raw raw
+          rm -f orig.raw relaid.raw
         shell: alpine.sh --root {0}
 
       # The image is built by root inside the chroot; make it readable by the
@@ -148,7 +371,7 @@ jobs:
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: do-droplet-image-latest
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -eu
           # Name the asset with the build date so a downloaded file is
@@ -159,7 +382,7 @@ jobs:
             gh release edit "$TAG" --notes "Automated build from ${GITHUB_SHA}."
           else
             gh release create "$TAG" \
-                --title 'Latest DO Droplet image' \
+                --title "Latest DO Droplet image (${TAG})" \
                 --notes "Automated build from ${GITHUB_SHA}." \
                 --prerelease
           fi
@@ -181,8 +404,7 @@ jobs:
         env:
           DO_TOKEN: ${{ secrets.DO_IMG_UPLOAD_PAT }}
           DO_REGION: ${{ vars.DO_IMG_UPLOAD_REGION }}
-          DO_IMAGE_NAME: alpine-do-droplet-latest
-          TAG: do-droplet-image-latest
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -eu
 

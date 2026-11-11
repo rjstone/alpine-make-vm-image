@@ -8,9 +8,21 @@ ifdef::env-github[]
 image:https://github.com/{fork-name}/actions/workflows/ci.yml/badge.svg?branch={fork-branch}["Build Status", link="https://github.com/{fork-name}/actions/workflows/ci.yml?query=branch%3A{fork-branch}"]
 endif::env-github[]
 
-This project provides a script for making customized https://alpinelinux.org/[Alpine Linux] VPS qcow2 images for Digital Ocean "Droplets" (their brand name for their VPS service instances). They are built for BIOS boot using https://syslinux.org/[Syslinux], x86_64, install `cloud-init`, `gcompat`, and otherwise only the bare minimum stuff needed.
+This project provides a script for making customized https://alpinelinux.org/[Alpine Linux] VPS qcow2 images for Digital Ocean "Droplets" (their brand name for their VPS service instances). They are built for BIOS boot using https://www.gnu.org/software/grub/[GRUB] (not Syslinux: see `--bootloader` in the script), x86_64, install `cloud-init`, `gcompat`, and otherwise only the bare minimum stuff needed.
 
 This is a fork of the {gh-name} repo which has a different default branch for the DO image build, and this different readme, but is otherwise the same as {gh-name}.
+
+== Logging In
+
+Your options for initial login are:
+
+- Use the recovery console and login as `alpine`: The user `alpine` needs no password on the console (its password is locked, and not asked for there even if you set one later), but it is restricted to only logging in on the console; ssh etc is blocked. From here you can use passwordless `doas` to add ssh keys to root, create users, etc., but `alpine` is blocked from ssh login in 3 places.
+
+- You can boot the image with no user-data and cloud-init will still install your web UI or cli-selected Digital Ocean keys for the root user. Root user login is blocked on the console by default, but is allowed on console if a password is set. root ssh is allowed with keys, but not with a password even if it is set.
+
+- Or use your own cloud-init user-data.yaml to set up accounts and keys however you want when its supplied on droplet creation.
+
+See the documentation linked below for more extreme detail.
 
 == Documentation for {fork-branch}
 
