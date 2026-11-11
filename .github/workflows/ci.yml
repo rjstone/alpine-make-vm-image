@@ -65,11 +65,15 @@ jobs:
       # Dated artifact name, e.g. alpine-do-2026-11-11, for the publish job.
       image_name: ${{ steps.compress.outputs.image_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # We must run this outside the chroot.
       - run: sudo modprobe nbd max_part=16
 
+      # Known leftover Node 20 warning: setup-alpine (v1.4.1, its latest, and
+      # master as of 2026-11-11) runs its chroot cleanup through
+      # webiny/action-post-run@3.1.0, which declares node20. Nothing to bump
+      # here; it goes away when upstream moves to a node24 post-run step.
       - name: Set up Alpine Linux v3.22
         uses: jirutka/setup-alpine@v1
         with:
@@ -384,7 +388,7 @@ jobs:
           ls -l alpine-do.qcow2.bz2
 
       - name: Upload image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.IMAGE_NAME }}
           path: alpine-do.qcow2.bz2
@@ -405,7 +409,7 @@ jobs:
       IMAGE_NAME: ${{ needs.build-alpine.outputs.image_name }}
     steps:
       - name: Download the image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.IMAGE_NAME }}
 
