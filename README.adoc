@@ -12,6 +12,18 @@ This project provides a script for making customized https://alpinelinux.org/[Al
 
 This is a fork of the {gh-name} repo which has a different default branch for the DO image build, and this different readme, but is otherwise the same as {gh-name}.
 
+== Logging In
+
+Your options for initial login are:
+
+- Use the recovery console and login as `alpine`: The user `alpine` has no password but it is restricted to only logging jn on the console; ssh etc is blocked. From here you can use passwordless `doas` to add ssh keys to root, create users, etc., but `alpine` is blocked from ssh login in 3 places.
+
+- You can boot the image with no user-data and cloud-init will still install your web UI or cli-selected Digital Ocean keys for the root user. Root user login is blocked on the console by default, but is allowed on console if a password is set. root ssh is allowed with keys, but not with a password even if it is set.
+
+- Or use your own cloud-init user-data.yaml to set up accounts and keys however you want when its supplied on droplet creation.
+
+See the documentation linked below for more extreme detail.
+  
 == Documentation for {fork-branch}
 
 See the link:docs/[docs] directory and the link:do-droplet/[do-droplet] directory for information about the DO-specific image in this branch.
