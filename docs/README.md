@@ -115,8 +115,10 @@ normal state, not a problem.
    two quick pushes cannot race on the upload. Fix-up commits are fine here.
    `user-data-examples/**` changes run the separate examples check instead
    (`.github/workflows/examples.yml`).
-3. **Open a PR** from `do-droplet-image-test` into `do-droplet-image`. PR runs build and test
-   but never publish.
+3. **Open a PR** from `do-droplet-image-test` into `do-droplet-image`. The PR shows the push
+   runs' checks for each commit; CI skips its own PR run for this branch, since it would only
+   repeat the same build on the same commit. (PRs from other branches, which have no push
+   run, do get a PR run: build and test, never publish.)
 4. **Test the real thing.** Create a Droplet from `alpine-do-droplet-test`. For boot or disk
    changes, also snapshot it and create a Droplet from the snapshot.
 5. **When satisfied, merge with "Squash and merge".** The squashed commit takes its message
