@@ -214,6 +214,10 @@ jobs:
           root_pw_state=$(awk -F: '$1 == "root" { p = substr($2, 1, 1)
               print ($2 == "" ? "EMPTY" : (p == "*" || p == "!") ? "locked" : "set") }' /mnt/etc/shadow)
           echo "root's password in the image as built: $root_pw_state"
+          # configure.sh sets "*": no valid hash, but not "!", which non-PAM
+          # sshd would read as a locked account and refuse even key logins.
+          check 'root password field is "*" (no password, keys still work)' \
+              'grep -q "^root:\*:" /mnt/etc/shadow'
           { cat /mnt/etc/passwd; echo 'alpine:x:1000:1000:Alpine:/home/alpine:/bin/ash'; } >/mnt/tmp/passwd
           { cat /mnt/etc/shadow; echo 'alpine:!:20000:0:99999:7:::'; } >/mnt/tmp/shadow.base
           cp /mnt/tmp/shadow.base /mnt/tmp/shadow
@@ -230,7 +234,7 @@ jobs:
           pam allow 'alpine, serial ttyS0, no password' auth login alpine /dev/ttyS0 ''
           pam deny 'alpine, pseudo-terminal' auth login alpine /dev/pts/0 ''
           pam deny 'alpine, SSH account stack' acct sshd alpine -
-          pam allow 'root, SSH account stack' acct sshd root -
+          pam allow "root, SSH account stack, image's own password ($root_pw_state)" acct sshd root -
           pam deny "root, console, image as built ($root_pw_state)" auth login root /dev/tty1 ''
           root_pw ''
           pam deny 'root, console, EMPTY password' auth login root /dev/tty1 ''

@@ -101,8 +101,8 @@ before it exists.
 
 | Account | SSH | Console (DO web console on tty1, serial on ttyS0) |
 |---|---|---|
-| `root` | **Yes, key only.** The Droplet's SSH keys go here (`disable_root: false`). | Only once a password is set; an empty or locked password is refused. |
-| `alpine` (cloud-init's default user, passwordless `doas`) | **Never.** `DenyUsers`, no pubkey auth or `authorized_keys` file (`Match`), and a PAM account rule each refuse it. | **Yes, no password.** Its password stays locked, so `su alpine` still fails. |
+| `root` | **Yes, key only.** The Droplet's SSH keys go here (`disable_root: false`). | Only once a password is set. The image ships root's password field as `*` (no password; not `!`, so keys keep working even under non-PAM sshd); empty or locked passwords are refused. |
+| `alpine` (cloud-init's default user, passwordless `doas`) | **Never.** `DenyUsers`, no pubkey auth or `authorized_keys` file (`Match`), and a PAM account rule each refuse it. | **Yes, no password**, even if one is set later (by design). Its password starts locked, so `su alpine` fails until one is set. |
 
 So a new Droplet works over SSH as root with the key you chose, and the web console works
 as `alpine` even if you lose that key: `doas passwd root` from there sets a root password,

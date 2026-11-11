@@ -71,6 +71,16 @@ ul_login=/$(apk info -L util-linux-login | grep -xE '(usr/)?s?bin/login' | head 
 [ "$ul_login" = /bin/login ] || ln -sf "$ul_login" /bin/login
 [ "$(readlink -f /bin/login)" = "$(readlink -f "$ul_login")" ]
 
+step "Lock root's password"
+# The base image ships root with an EMPTY password field, which audit tools
+# flag and any PAM stack with nullok would accept. "*" is no valid hash, so
+# password logins fail. It is not "!": on Linux, non-PAM sshd treats a leading
+# "!" as a locked account and refuses even key logins; sshd here uses PAM, but
+# "*" keeps root's SSH keys working either way. To log in as root on the
+# console, set a password from the alpine console: doas passwd root.
+sed -Ei 's/^root:[^:]*:/root:*:/' /etc/shadow
+grep -q '^root:\*:' /etc/shadow
+
 step 'Enable services'
 rc-update add acpid default
 rc-update add chronyd default
