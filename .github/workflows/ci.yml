@@ -70,8 +70,14 @@ jobs:
       # We must run this outside the chroot.
       - run: sudo modprobe nbd max_part=16
 
+      # Our fork of jirutka/setup-alpine: its chroot teardown runs through a
+      # node24 post step (gacts/run-and-post-run) instead of
+      # webiny/action-post-run@3.1.0, which is node20 and caused a Node 20
+      # deprecation warning on every run. TEMPORARY: @test is a moving branch;
+      # pin a tag or commit of the fork (or go back to upstream once it has
+      # the fix) before merging to do-droplet-image.
       - name: Set up Alpine Linux v3.22
-        uses: jirutka/setup-alpine@v1
+        uses: rjstone/setup-alpine@test
         with:
           # XXX: v3.23 doesn't work here, running package triggers results in "unshare: Invalid argument"
           branch: v3.22
