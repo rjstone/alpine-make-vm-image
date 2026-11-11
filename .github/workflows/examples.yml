@@ -1,0 +1,48 @@
+name: User-data examples
+# Static checks for user-data-examples/ (see .github/examples/check-user-data.py).
+# Kept out of ci.yml so editing an example never rebuilds or republishes the
+# image. Does not boot anything: a wrong-but-valid setting still needs a
+# Droplet test.
+on:
+  push:
+    # Same branches as ci.yml. Other branches are checked by their PR.
+    branches:
+      - do-droplet-image
+      - do-droplet-image-test
+    paths:
+      - "user-data-examples/**"
+      - ".github/examples/**"
+      - ".github/workflows/examples.yml"
+  pull_request:
+    paths:
+      - "user-data-examples/**"
+      - ".github/examples/**"
+      - ".github/workflows/examples.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check user-data examples
+    # A PR from this repo's do-droplet-image-test would only repeat the push
+    # run on the same commit, whose check already shows on the PR.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.ref != 'do-droplet-image-test'
+      || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # opendoas is the doas Alpine ships, so doas -C parses rules the same way.
+      - name: Install checkers
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends opendoas python3-yaml
+      - name: Check examples
+        run: python3 .github/examples/check-user-data.py user-data-examples/*.yaml

@@ -40,6 +40,14 @@ From Alpine's `cloud-init` `README.Alpine`:
 - **BIOS + GPT** Droplets have historically booted SeaBIOS, so a UEFI-only image risks not
   booting at all. Confirmed: build BIOS mode with `--partition` (GPT satisfies DO's partition
   requirement).
+- **GRUB, not extlinux** (`--bootloader grub`). Droplets created from a snapshot of an
+  extlinux-booted Droplet stopped at "Boot error". That message is extlinux's boot sector
+  failing to find `ldlinux.sys` at the block address `extlinux --install` recorded: the MBR,
+  GPT and the partition's boot sector all survived, so the snapshot restore evidently rebuilt
+  the root filesystem file by file. GRUB keeps its core image in a 1 MiB BIOS boot partition
+  (p1, outside any filesystem) and reads `/boot` by path, the layout DO's own Ubuntu images
+  use. Root is p2 and stays last, so `growpart` still works. CI boots the image in QEMU, and
+  again after rebuilding its root filesystem file by file.
 - Also put `gcompat`, `libstdc++` in the base image, though they are optional.
 
 ## Work
@@ -89,7 +97,16 @@ change the body:
 - keep the `rc.conf` `sed` block as-is.
 - `setup-devd udev` (eudev, per README.Alpine).
 - `setup-cloud-init` to register the cloud-init OpenRC services.
-- `sshd_config`: `UsePAM yes`, `PermitRootLogin prohibit-password`, `PasswordAuthentication no`.
+- `sshd_config`: `UsePAM yes`, `PermitRootLogin prohibit-password`, `PasswordAuthentication no`,
+  `KbdInteractiveAuthentication no` (with PAM, keyboard-interactive would otherwise still allow
+  password logins).
+- `/etc/ssh/sshd_config.d/10-crypto.conf` and `/etc/ssh/ssh_config.d/10-crypto.conf` (rootfs
+  overlay): `MACs -hmac-sha1*,umac-64*`, removing those MACs from OpenSSH's defaults.
+- login policy (rootfs overlay + `util-linux-login`, `/bin/login` pointed at it): Droplet SSH
+  keys on root (`disable_root: false`); `alpine` refused over SSH (`DenyUsers`, `Match`
+  without pubkey auth, PAM account rule in `/etc/pam.d/sshd`) but passwordless on tty/ttyS
+  consoles (`/etc/pam.d/login`, which also drops `nullok` so empty passwords fail). See
+  *Logging in* in `docs/README.md`.
 - services: `sshd`, `chronyd`, `crond`, `acpid`, `udev`, `net.eth0` default; `net.lo` boot.
 - final cleanup so the image ships stateless: `cloud-init clean --logs`, remove
   `/etc/ssh/ssh_host_*`, truncate `/etc/machine-id`.
@@ -108,6 +125,7 @@ and the `setup-alpine` aarch64 re-invocation. One build step remains:
         --image-format qcow2 \
         --image-size 2G \
         --partition \
+        --bootloader grub \
         --serial-console \
         --repositories-file do-droplet/repositories \
         --packages "$(cat do-droplet/packages)" \
@@ -118,7 +136,7 @@ and the `setup-alpine` aarch64 re-invocation. One build step remains:
   shell: alpine.sh --root {0}
 ```
 
-`--partition` gives GPT under BIOS boot. `--serial-console` wires ttyS0 for DO's recovery
+`--partition` gives GPT under BIOS boot; `--bootloader grub` adds the BIOS boot partition. `--serial-console` wires ttyS0 for DO's recovery
 console. 2G keeps the upload small — cloud-init `growpart` expands to the Droplet's 10/25 GiB
 on first boot.
 
@@ -146,6 +164,8 @@ failure modes that CI green would otherwise hide) — remount the built image wi
 - `/etc/cloud/cloud.cfg.d/01-datasource.cfg` exists and lists ConfigDrive first
 - `/etc/init.d/cloud-init-local` is in a runlevel (i.e. `setup-cloud-init` took effect)
 - `grep '^UsePAM yes' /etc/ssh/sshd_config`
+- the image's own `sshd -T` and `ssh -G` parse the config and report `passwordauthentication no`,
+  `kbdinteractiveauthentication no`, and no `hmac-sha1`/`umac-64` MACs
 - `/etc/ssh/ssh_host_*` absent, `/etc/machine-id` empty
 
 Additional CI/CD isn't covered here. Compressing the image as `.bz2` is recommended and

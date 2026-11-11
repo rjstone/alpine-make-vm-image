@@ -91,6 +91,54 @@ the cleanup step (which matches on name) would then delete all but the newest. T
 happen only after the initial import reaches `available`, since an image cannot be transferred
 before it exists.
 
+## Making changes: the `do-droplet-image-test` branch
+
+`do-droplet-image` is the default branch and publishes the production image. Changes do not
+go straight onto it. They go through **`do-droplet-image-test`**, the standard test branch,
+and land on `do-droplet-image` as a **single squashed commit**. All the "oops, CI broke"
+fix-ups stay on the test branch and never reach `do-droplet-image`'s history.
+
+The test branch only exists while a change is in progress. Between rounds it is normally
+deleted (GitHub may do that automatically on merge), so "the branch is missing" is the
+normal state, not a problem.
+
+1. **Create it from the tip of `do-droplet-image`:**
+   ```sh
+   git fetch origin do-droplet-image
+   git checkout -B do-droplet-image-test origin/do-droplet-image
+   git push -u origin do-droplet-image-test
+   ```
+   If the branch still exists on GitHub, check what's on it before doing this. If it holds
+   only already-merged work, recreate it this way and push with `--force-with-lease`. If it
+   holds unmerged work, carry on with that work instead.
+2. **Push commits to it.** Each push that touches the image (`do-droplet/**`, the builder
+   script, `.github/workflows/ci.yml` or `.github/ci/**`) builds, tests and publishes under
+   the **test names**: release `do-droplet-image-test-latest` and DigitalOcean image
+   `alpine-do-droplet-test`. Production's `do-droplet-image-latest` /
+   `alpine-do-droplet-latest` are never touched. Pushes queue one at a time per branch, so
+   two quick pushes cannot race on the upload. Fix-up commits are fine here.
+   `user-data-examples/**` changes run the separate examples check instead
+   (`.github/workflows/examples.yml`).
+3. **Open a PR** from `do-droplet-image-test` into `do-droplet-image`. The PR shows the push
+   runs' checks for each commit; CI skips its own PR run for this branch, since it would only
+   repeat the same build on the same commit. (PRs from other branches, which have no push
+   run, do get a PR run: build and test, never publish.)
+
+   CI is three jobs: **Build image** (build, verify, boot-test, artifact), then **Publish
+   rolling release**, then **Upload to DigitalOcean** (it needs the release URL). The last two
+   run only on pushes. A branch rule for `do-droplet-image` should require only **Build
+   image**, so a failed publish or upload never blocks a merge.
+4. **Test the real thing.** Create a Droplet from `alpine-do-droplet-test`. For boot or disk
+   changes, also snapshot it and create a Droplet from the snapshot.
+5. **When satisfied, merge with "Squash and merge".** The squashed commit takes its message
+   from the PR title and description, so keep those current as the PR changes. The merge
+   then builds `do-droplet-image` and publishes the production names.
+6. **Delete `do-droplet-image-test`** if GitHub didn't. The next change starts again at
+   step 1.
+
+Branches for changes that don't need a test image, such as a CI-only fix, can use any other
+name (e.g. `fix/ci-race-fix`), still merged by squash.
+
 ## Other references
 
 - <https://cloud-init.io/> — upstream cloud-init project.
@@ -100,6 +148,27 @@ before it exists.
   precisely what DigitalOcean says will stop a Droplet from functioning. We use
   `[ ConfigDrive, DigitalOcean, None ]` instead, in
   `do-droplet/rootfs/etc/cloud/cloud.cfg.d/01-datasource.cfg`.
+
+## Logging in
+
+| Account | SSH | Console (DO web console on tty1, serial on ttyS0) |
+|---|---|---|
+| `root` | **Yes, key only.** The Droplet's SSH keys go here (`disable_root: false`). | Only once a password is set. The image ships root's password field as `*` (no password; not `!`, so keys keep working even under non-PAM sshd); empty or locked passwords are refused. |
+| `alpine` (cloud-init's default user, passwordless `doas`) | **Never.** `DenyUsers`, no pubkey auth or `authorized_keys` file (`Match`), and a PAM account rule each refuse it. | **Yes, no password**, even if one is set later (by design). Its password starts locked, so `su alpine` fails until one is set. |
+
+So a new Droplet works over SSH as root with the key you chose, and the web console works
+as `alpine` even if you lose that key: `doas passwd root` from there sets a root password,
+and you can add keys from there too. Anyone who can open the web console can already
+rebuild the Droplet or boot the recovery ISO, so the passwordless console login adds no
+real exposure. Files: `etc/cloud/cloud.cfg.d/10-root-ssh-keys.cfg`,
+`etc/ssh/sshd_config.d/20-deny-alpine.conf`, `etc/pam.d/{login,sshd}` under
+`do-droplet/rootfs/`. `/bin/login` is util-linux's PAM login (busybox's ignores PAM); CI
+checks it, the effective `sshd -T` config per user, and the PAM stacks themselves
+(`.github/ci/pamcheck.c`).
+
+To drop the console convenience, delete the `pam_succeed_if` line from `/etc/pam.d/login`.
+To stop cloud-init creating `alpine` at all, give user-data a `users:` list without
+`- default`.
 
 ## The requirements that actually drive the build
 

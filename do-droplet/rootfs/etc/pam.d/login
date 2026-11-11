@@ -1,0 +1,28 @@
+#%PAM-1.0
+# Console logins: getty on tty1 (DigitalOcean's web/recovery console) and ttyS0
+# (serial) runs util-linux's PAM-enabled /bin/login. Overrides linux-pam's
+# /usr/lib/pam.d/login, which uses base-auth. Two differences from that:
+#
+#  1. alpine, cloud-init's default user, logs in WITHOUT a password, but only
+#     on a local console. Its password stays locked, so `su alpine` and every
+#     other service still refuse it, and SSH refuses it separately (see
+#     /etc/pam.d/sshd). login sets PAM_TTY to the full path, e.g. /dev/tty1;
+#     SSH sessions are /dev/pts/N and never use this file anyway.
+#  2. pam_unix WITHOUT nullok. base-auth has nullok, which would let an
+#     account with an EMPTY password field (root included) straight in. Here
+#     an empty or locked password is refused, so root can log in on the
+#     console only after someone sets its password with passwd.
+
+#
+# Order matters: pam_nologin and pam_env first, because success=done ends the
+# stack. done records success, which a jump (success=1) would not; with only
+# PAM_IGNORE results after a jump, libpam denies. An earlier required failure
+# (e.g. /etc/nologin) still wins over done.
+
+auth      required   pam_nologin.so
+auth      required   pam_env.so
+auth      [success=done default=ignore]  pam_succeed_if.so quiet user = alpine tty =~ /dev/tty*
+auth      required   pam_unix.so
+account   include    base-account
+password  include    base-password
+session   include    base-session
