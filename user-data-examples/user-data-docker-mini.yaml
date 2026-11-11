@@ -2,10 +2,11 @@
 groups:
     - docker
 users:
-    - default
     - name: deploy
       groups: [docker, wheel]
       shell: /bin/sh
+      doas:
+          - permit nopass deploy
 package_update: true
 package_upgrade: true
 packages:
@@ -42,11 +43,6 @@ swap:
     size: 1073741824
     maxsize: 1073741824
 write_files:
-    - path: /etc/doas.d/60-wheel.conf
-      owner: "root:root"
-      permissions: "0400"
-      content: |
-          permit nopass :wheel
     - path: /etc/docker/daemon.json
       permissions: "0644"
       content: |
@@ -73,8 +69,13 @@ runcmd:
         else
           echo 'WARNING: /root/.ssh/authorized_keys missing or empty; deploy has no key' >&2
         fi
+    - |
+        if id alpine >/dev/null 2>&1; then
+          deluser --remove-home alpine
+          sed -Ei '/^permit .*[[:space:]]alpine([[:space:]]|$)/d' /etc/doas.conf
+          echo 'alpine: deleted (account, home, doas rule)'
+        fi
     - doas -C /etc/doas.conf || echo "ERROR - doas /etc/doas.conf invalid" >&2
-    - doas -C /etc/doas.d/60-wheel.conf || echo "ERROR - doas /etc/doas.d/60-wheel.conf invalid" >&2
     - sysctl -p /etc/sysctl.d/99-docker.conf
     - rc-update add docker default
     - rc-service docker start
