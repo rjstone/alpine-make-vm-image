@@ -5,12 +5,15 @@ on:
       - do-droplet-image
       # Trial builds. Published under separate names (see env below), so a
       # push here never replaces the production image or release.
+      # The standard test branch: recreated from do-droplet-image for each
+      # change, squash-merged back, then deleted. It is often absent; that is
+      # normal. Procedure: "Making changes" in docs/README.md.
       - do-droplet-image-test
     paths:
       - "do-droplet/**"
       - "alpine-make-vm-image"
       - ".github/workflows/ci.yml"
-      - ".github/ci/**"
+      - ".github/ci/**"   # image-test helpers only (examples: .github/examples/)
   pull_request:
     paths:
       - "do-droplet/**"
@@ -31,18 +34,36 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Only the do-droplet-image branch publishes the production release and
+  # DigitalOcean image; every other ref uses the -test names.
+  RELEASE_TAG: ${{ github.ref_name == 'do-droplet-image' && 'do-droplet-image-latest' || 'do-droplet-image-test-latest' }}
+  DO_IMAGE_NAME: ${{ github.ref_name == 'do-droplet-image' && 'alpine-do-droplet-latest' || 'alpine-do-droplet-test' }}
+
+# Three jobs, so a branch rule can require only "Build image" and a failed
+# publish or upload never blocks a merge:
+#   build-alpine     build, verify, boot-test, compress, upload artifact
+#   publish-release  rolling GitHub release from that artifact (not on PRs)
+#   upload-do        DigitalOcean import from the release URL (not on PRs).
+#                    It must follow publish-release: DO fetches the image from
+#                    the public release asset, and an Actions artifact needs an
+#                    authenticated download, so DO cannot use one.
 jobs:
   build-alpine:
-    name: Build DO Droplet image
+    name: Build image
+    # A PR from this repo's do-droplet-image-test would only repeat the push
+    # run on the same commit (minus publishing), whose check already shows on
+    # the PR. PRs from any other branch have no push run, so they still build.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.ref != 'do-droplet-image-test'
+      || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
-    env:
-      # Only the do-droplet-image branch publishes the production release and
-      # DigitalOcean image; every other ref uses the -test names.
-      RELEASE_TAG: ${{ github.ref_name == 'do-droplet-image' && 'do-droplet-image-latest' || 'do-droplet-image-test-latest' }}
-      DO_IMAGE_NAME: ${{ github.ref_name == 'do-droplet-image' && 'alpine-do-droplet-latest' || 'alpine-do-droplet-test' }}
     permissions:
-      # Needed by the publish step to create/update the rolling release.
-      contents: write
+      contents: read
+    outputs:
+      # Dated artifact name, e.g. alpine-do-2026-11-11, for the publish job.
+      image_name: ${{ steps.compress.outputs.image_name }}
     steps:
       - uses: actions/checkout@v6
 
@@ -352,10 +373,13 @@ jobs:
       # DigitalOcean accepts a custom image compressed with gzip or bzip2 and
       # decompresses it on import, so we ship the bz2 and never the raw qcow2.
       - name: Compress the image
+        id: compress
         run: |
           set -eu
           sudo chown "$(id -u):$(id -g)" alpine-do.qcow2
-          echo "IMAGE_NAME=alpine-do-$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+          image_name="alpine-do-$(date -u +%Y-%m-%d)"
+          echo "IMAGE_NAME=$image_name" >> "$GITHUB_ENV"
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
           bzip2 -9 alpine-do.qcow2
           ls -l alpine-do.qcow2.bz2
 
@@ -369,6 +393,22 @@ jobs:
           # Already bzip2'd; re-deflating it in the artifact zip only burns time.
           compression-level: 0
 
+  publish-release:
+    name: Publish rolling release
+    needs: build-alpine
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      # Create/update the rolling release.
+      contents: write
+    env:
+      IMAGE_NAME: ${{ needs.build-alpine.outputs.image_name }}
+    steps:
+      - name: Download the image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}
+
       # Workflow artifacts need an authenticated API call to download, so
       # DigitalOcean cannot import from one. A release asset is public and,
       # unlike the artifact, is a plain file rather than a zip wrapper.
@@ -380,9 +420,10 @@ jobs:
       # Only publishes for pushes to the branch, never for pull requests, which
       # would otherwise let a PR overwrite the published image.
       - name: Publish rolling release
-        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          # No checkout in this job, so tell gh which repository to use.
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -eu
@@ -406,13 +447,22 @@ jobs:
           echo "Stable import URL:"
           echo "  https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/alpine-do.qcow2.bz2"
 
+  upload-do:
+    name: Upload to DigitalOcean
+    # After publish-release: DO fetches the URL server-side, so the release
+    # asset must already exist.
+    needs: publish-release
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
       # Hand the release URL to DigitalOcean so the image is ready to use
       # without a manual import. Runs after the release step because DO fetches
       # the URL server-side, so the asset must already be published.
       #
       # NOTE: the API cannot replace the contents of an existing custom image
       - name: Upload image to DigitalOcean
-        if: github.event_name != 'pull_request'
         env:
           DO_TOKEN: ${{ secrets.DO_IMG_UPLOAD_PAT }}
           DO_REGION: ${{ vars.DO_IMG_UPLOAD_REGION }}

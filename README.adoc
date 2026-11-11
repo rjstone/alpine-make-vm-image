@@ -28,6 +28,8 @@ See the documentation linked below for more extreme detail.
 
 See the link:docs/[docs] directory and the link:do-droplet/[do-droplet] directory for information about the DO-specific image in this branch.
 
+Changes go through the `do-droplet-image-test` branch and are squash-merged into `{fork-branch}`; see _Making changes_ in link:docs/README.md[docs/README.md].
+
 See link:user-data-examples/[user-data-examples] for some `cloud-init` user-data example yaml configs that you can use to configure and install stuff on first boot.
 
 A short quick start for using the image if you have doctl CLI set up (install the doctl package and use `doctl auth init` with a personal access token if not):
