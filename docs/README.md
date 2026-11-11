@@ -119,6 +119,11 @@ normal state, not a problem.
    runs' checks for each commit; CI skips its own PR run for this branch, since it would only
    repeat the same build on the same commit. (PRs from other branches, which have no push
    run, do get a PR run: build and test, never publish.)
+
+   CI is three jobs: **Build image** (build, verify, boot-test, artifact), then **Publish
+   rolling release**, then **Upload to DigitalOcean** (it needs the release URL). The last two
+   run only on pushes. A branch rule for `do-droplet-image` should require only **Build
+   image**, so a failed publish or upload never blocks a merge.
 4. **Test the real thing.** Create a Droplet from `alpine-do-droplet-test`. For boot or disk
    changes, also snapshot it and create a Droplet from the snapshot.
 5. **When satisfied, merge with "Squash and merge".** The squashed commit takes its message
