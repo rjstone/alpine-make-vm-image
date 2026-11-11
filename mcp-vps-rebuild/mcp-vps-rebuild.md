@@ -42,7 +42,10 @@ It installs `docker-engine`, `docker-cli-compose`, and `git`; enables and
 starts the daemon; sets log rotation and `overlay2` in
 `/etc/docker/daemon.json`; adds a 1 GiB swapfile; creates a `deploy` user in
 the `docker` and `wheel` groups and copies root's authorized keys to it; and
-allows passwordless `doas` for `wheel`.
+allows passwordless `doas` for `deploy` only (not all of `wheel`). It keeps
+the image's `alpine` user as a console-recovery account: refused over SSH,
+passwordless with `doas` on the DigitalOcean web console. See *Logging in* in
+`docs/README.md`.
 
 ### The docker group GID is a coupling, not a detail
 

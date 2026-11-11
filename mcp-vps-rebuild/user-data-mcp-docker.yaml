@@ -14,11 +14,19 @@
 # create its own.
 bootcmd:
     - getent group docker || addgroup -g 1000 docker
+# "default" keeps the image's alpine user as a console-recovery account: no SSH
+# (refused by sshd and PAM), but a passwordless login with passwordless doas on
+# the DigitalOcean web console. See "Logging in" in docs/README.md.
+#
+# deploy's doas rule is scoped to deploy itself rather than to :wheel, so
+# adding someone to wheel later does not silently grant passwordless root.
 users:
     - default
     - name: deploy
       groups: [docker, wheel]
       shell: /bin/sh
+      doas:
+          - permit nopass deploy
 package_update: true
 package_upgrade: true
 packages:
@@ -54,11 +62,6 @@ swap:
     size: 1073741824
     maxsize: 1073741824
 write_files:
-    - path: /etc/doas.d/60-wheel.conf
-      owner: "root:root"
-      permissions: "0400"
-      content: |
-          permit nopass :wheel
     - path: /etc/docker/daemon.json
       permissions: "0644"
       content: |
@@ -86,7 +89,6 @@ runcmd:
           echo 'WARNING: /root/.ssh/authorized_keys missing or empty; deploy has no key' >&2
         fi
     - doas -C /etc/doas.conf || echo "ERROR - doas /etc/doas.conf invalid" >&2
-    - doas -C /etc/doas.d/60-wheel.conf || echo "ERROR - doas /etc/doas.d/60-wheel.conf invalid" >&2
     - sysctl -p /etc/sysctl.d/99-docker.conf
     - rc-update add docker default
     - rc-service docker start
