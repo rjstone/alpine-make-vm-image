@@ -1,0 +1,38 @@
+name: User-data examples
+# Static checks for user-data-examples/ (see .github/ci/check-user-data.py).
+# Kept out of ci.yml so editing an example never rebuilds or republishes the
+# image. Does not boot anything: a wrong-but-valid setting still needs a
+# Droplet test.
+on:
+  push:
+    paths:
+      - "user-data-examples/**"
+      - ".github/ci/check-user-data.py"
+      - ".github/workflows/examples.yml"
+  pull_request:
+    paths:
+      - "user-data-examples/**"
+      - ".github/ci/check-user-data.py"
+      - ".github/workflows/examples.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check user-data examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # opendoas is the doas Alpine ships, so doas -C parses rules the same way.
+      - name: Install checkers
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends opendoas python3-yaml
+      - name: Check examples
+        run: python3 .github/ci/check-user-data.py user-data-examples/*.yaml
