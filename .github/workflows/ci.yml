@@ -5,6 +5,9 @@ on:
       - do-droplet-image
       # Trial builds. Published under separate names (see env below), so a
       # push here never replaces the production image or release.
+      # The standard test branch: recreated from do-droplet-image for each
+      # change, squash-merged back, then deleted. It is often absent; that is
+      # normal. Procedure: "Making changes" in docs/README.md.
       - do-droplet-image-test
     paths:
       - "do-droplet/**"

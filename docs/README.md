@@ -87,6 +87,47 @@ the cleanup step (which matches on name) would then delete all but the newest. T
 happen only after the initial import reaches `available`, since an image cannot be transferred
 before it exists.
 
+## Making changes: the `do-droplet-image-test` branch
+
+`do-droplet-image` is the default branch and publishes the production image. Changes do not
+go straight onto it. They go through **`do-droplet-image-test`**, the standard test branch,
+and land on `do-droplet-image` as a **single squashed commit**. All the "oops, CI broke"
+fix-ups stay on the test branch and never reach `do-droplet-image`'s history.
+
+The test branch only exists while a change is in progress. Between rounds it is normally
+deleted (GitHub may do that automatically on merge), so "the branch is missing" is the
+normal state, not a problem.
+
+1. **Create it from the tip of `do-droplet-image`:**
+   ```sh
+   git fetch origin do-droplet-image
+   git checkout -B do-droplet-image-test origin/do-droplet-image
+   git push -u origin do-droplet-image-test
+   ```
+   If the branch still exists on GitHub, check what's on it before doing this. If it holds
+   only already-merged work, recreate it this way and push with `--force-with-lease`. If it
+   holds unmerged work, carry on with that work instead.
+2. **Push commits to it.** Each push that touches the image (`do-droplet/**`, the builder
+   script, `.github/workflows/ci.yml` or `.github/ci/**`) builds, tests and publishes under
+   the **test names**: release `do-droplet-image-test-latest` and DigitalOcean image
+   `alpine-do-droplet-test`. Production's `do-droplet-image-latest` /
+   `alpine-do-droplet-latest` are never touched. Pushes queue one at a time per branch, so
+   two quick pushes cannot race on the upload. Fix-up commits are fine here.
+   `user-data-examples/**` changes run the separate examples check instead
+   (`.github/workflows/examples.yml`).
+3. **Open a PR** from `do-droplet-image-test` into `do-droplet-image`. PR runs build and test
+   but never publish.
+4. **Test the real thing.** Create a Droplet from `alpine-do-droplet-test`. For boot or disk
+   changes, also snapshot it and create a Droplet from the snapshot.
+5. **When satisfied, merge with "Squash and merge".** The squashed commit takes its message
+   from the PR title and description, so keep those current as the PR changes. The merge
+   then builds `do-droplet-image` and publishes the production names.
+6. **Delete `do-droplet-image-test`** if GitHub didn't. The next change starts again at
+   step 1.
+
+Branches for changes that don't need a test image, such as a CI-only fix, can use any other
+name (e.g. `fix/ci-race-fix`), still merged by squash.
+
 ## Other references
 
 - <https://cloud-init.io/> — upstream cloud-init project.
