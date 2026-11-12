@@ -58,12 +58,7 @@ jobs:
       github.event_name != 'pull_request'
       || github.event.pull_request.head.ref != 'do-droplet-image-test'
       || github.event.pull_request.head.repo.full_name != github.repository
-    # Pinned: ubuntu-latest is now 26.04, whose sudo (sudo-rs) ignores a bare
-    # `sudo -E`. setup-alpine runs `sudo -E ./setup-alpine.sh`, so its INPUT_*
-    # variables are dropped and the script dies on `set -u`. Return to
-    # ubuntu-latest once the setup-alpine fork passes them with
-    # `sudo --preserve-env=...` instead.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
@@ -75,14 +70,16 @@ jobs:
       # We must run this outside the chroot.
       - run: sudo modprobe nbd max_part=16
 
-      # Our fork of jirutka/setup-alpine, tag v1.4.2 = upstream v1.4.1 plus a
-      # node24 chroot teardown (gacts/run-and-post-run) instead of
-      # webiny/action-post-run@3.1.0, which is node20 and caused a Node 20
-      # deprecation warning on every run. Pinned by commit so a moved tag
-      # cannot change the build. Go back to jirutka/setup-alpine once upstream
-      # ships an equivalent fix.
+      # Our fork of jirutka/setup-alpine, tag V1.4.3 = upstream v1.4.1 plus:
+      # - a node24 chroot teardown (gacts/run-and-post-run) instead of
+      #   webiny/action-post-run@3.1.0, which is node20 and caused a Node 20
+      #   deprecation warning on every run;
+      # - `sudo env` instead of `sudo -E`, which sudo-rs (the sudo on Ubuntu
+      #   26.04, now ubuntu-latest) ignores, dropping the action's inputs.
+      # Pinned by commit so a moved tag cannot change the build. Go back to
+      # jirutka/setup-alpine once upstream ships equivalent fixes.
       - name: Set up Alpine Linux v3.22
-        uses: rjstone/setup-alpine@c86c90ee5a15050dd4210924d9ad27fc4ccc7f0e # v1.4.2
+        uses: rjstone/setup-alpine@23b837e7f47a9c37f29276612a7bb0aee5d8c7d4 # V1.4.3
         with:
           # XXX: v3.23 doesn't work here, running package triggers results in "unshare: Invalid argument"
           branch: v3.22
