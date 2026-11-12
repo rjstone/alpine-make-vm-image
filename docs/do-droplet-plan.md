@@ -115,7 +115,10 @@ change the body:
 
 Delete the `test-ubuntu` job entirely. Rename `test-alpine` → `build-alpine`
 (`name: Build DO Droplet image`). Keep its `modprobe nbd max_part=16` step and the
-`jirutka/setup-alpine@v1` v3.22 pin with its existing XXX comment. Delete the aarch64 steps
+`setup-alpine` step's v3.22 branch pin with its existing XXX comment. (The plan used
+`jirutka/setup-alpine@v1`; the workflow now uses our fork `rjstone/setup-alpine`, pinned by
+commit to v1.4.4 for the node24 teardown and sudo-rs fixes. See the comment in `ci.yml`.)
+Delete the aarch64 steps
 and the `setup-alpine` aarch64 re-invocation. One build step remains:
 
 ```yaml
