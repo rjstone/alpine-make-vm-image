@@ -58,7 +58,12 @@ jobs:
       github.event_name != 'pull_request'
       || github.event.pull_request.head.ref != 'do-droplet-image-test'
       || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is now 26.04, whose sudo (sudo-rs) ignores a bare
+    # `sudo -E`. setup-alpine runs `sudo -E ./setup-alpine.sh`, so its INPUT_*
+    # variables are dropped and the script dies on `set -u`. Return to
+    # ubuntu-latest once the setup-alpine fork passes them with
+    # `sudo --preserve-env=...` instead.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
