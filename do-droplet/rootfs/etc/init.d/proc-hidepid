@@ -1,0 +1,48 @@
+#!/sbin/openrc-run
+# Remounts /proc with hidepid, so an unprivileged user sees only their own
+# processes. Without it, any local account can read every process's command
+# line (ps, /proc/<pid>/cmdline), including secrets a service was given as
+# arguments. /proc/<pid>/environ is already owner-only; hidepid also hides
+# argv, the process list itself, and per-process status.
+#
+# Why a service and not an /etc/fstab line: Alpine's initramfs mounts /proc
+# and moves it into the real root before switch_root, so OpenRC finds it
+# already mounted and never applies fstab's options to it (init.sh.Linux
+# only runs "fstabinfo --mount /proc" when /proc is NOT mounted, and
+# localmount skips proc). A remount is the only way to set them.
+#
+# Root and processes with CAP_SYS_PTRACE are unaffected. Containers get their
+# own procfs instance, so this does not change what a container sees. To let
+# a group see all processes (e.g. a monitoring agent), set proc_hidepid_gid
+# in /etc/conf.d/proc-hidepid.
+
+description="Hide other users' processes in /proc (hidepid=2)"
+
+: ${proc_hidepid:=2}
+
+depend() {
+	keyword -docker -lxc -openvz -prefix -systemd-nspawn -vserver
+}
+
+start() {
+	ebegin "Remounting /proc with hidepid=$proc_hidepid"
+
+	# A remount replaces the per-mount flags it does not name, so restate
+	# the ones the initramfs and OpenRC use.
+	local opts="remount,nosuid,nodev,noexec,hidepid=$proc_hidepid"
+	[ -n "${proc_hidepid_gid:-}" ] && opts="$opts,gid=$proc_hidepid_gid"
+
+	if ! mount -o "$opts" /proc; then
+		eend 1 "mount -o $opts /proc failed"
+		return 1
+	fi
+
+	# The kernel reports hidepid=2 as "invisible" (5.8+). Fail loudly if the
+	# option did not take, rather than leave a false sense of protection.
+	if ! awk '$2 == "/proc" && $3 == "proc" { print $4 }' /proc/mounts \
+			| grep -Eq "(^|,)hidepid=($proc_hidepid|invisible|noaccess)(,|$)"; then
+		eend 1 "/proc is mounted but hidepid is not in effect"
+		return 1
+	fi
+	eend 0
+}

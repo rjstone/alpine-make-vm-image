@@ -203,6 +203,21 @@ configures it. The `do-anchor-ip` OpenRC service (`do-droplet/rootfs/etc/init.d/
 gap: on every boot it reads the anchor from the metadata service and adds it to the interface
 whose MAC matches the public one. It needs `net`, so restarting `net.eth0` re-adds it.
 
+### Private `/proc` (hidepid)
+
+By default any local account can list every process and read its command line, including
+secrets a service was given as arguments (seen in practice: an OAuth client secret on a
+container's argv, read by a plain user with `ps`). The `proc-hidepid` OpenRC service, in the
+`sysinit` runlevel, remounts `/proc` with `hidepid=2`, so unprivileged users see only their own
+processes. Root is unaffected, and containers get their own procfs instance.
+
+It is a service, not an `/etc/fstab` line, because an fstab line would be silently ignored:
+Alpine's initramfs mounts `/proc` and moves it into the real root before `switch_root`, and
+OpenRC applies fstab options to `/proc` only when it is not mounted yet (`localmount` skips
+proc too). The service checks `/proc/mounts` afterwards and fails if hidepid did not take.
+To let a group see all processes (a monitoring agent, say), set `proc_hidepid_gid` in
+`/etc/conf.d/proc-hidepid`. Check on a running Droplet with `grep ' /proc ' /proc/mounts`.
+
 ### Why the repositories file is pinned to v3.22
 
 `do-droplet/repositories` names `v3.22` explicitly rather than `latest-stable`, and it must

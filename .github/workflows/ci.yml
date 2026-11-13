@@ -139,6 +139,12 @@ jobs:
           # network config omits; this service adds it from the metadata API.
           check 'do-anchor-ip enabled at boot' \
               '[ -L /mnt/etc/runlevels/default/do-anchor-ip ] && [ -x /mnt/etc/init.d/do-anchor-ip ]'
+          # Any local account could otherwise read every process's argv.
+          # An fstab line would be ignored: initramfs hands over /proc mounted.
+          check 'proc-hidepid enabled at sysinit' \
+              '[ -L /mnt/etc/runlevels/sysinit/proc-hidepid ] && [ -x /mnt/etc/init.d/proc-hidepid ]'
+          check 'proc-hidepid conf.d present' \
+              '[ -f /mnt/etc/conf.d/proc-hidepid ]'
           check 'dhcpcd daemon NOT enabled at boot' \
               '! [ -L /mnt/etc/runlevels/default/dhcpcd ]'
           check 'timezone set to UTC' \

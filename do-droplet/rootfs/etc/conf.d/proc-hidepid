@@ -1,0 +1,9 @@
+# Settings for /etc/init.d/proc-hidepid.
+
+# hidepid mode: 2 (invisible) hides other users' processes entirely;
+# 1 (noaccess) lists their PIDs but denies reading them.
+#proc_hidepid=2
+
+# Numeric GID whose members may still see all processes, e.g. for a
+# monitoring agent. Unset: only root (and CAP_SYS_PTRACE) see everything.
+#proc_hidepid_gid=

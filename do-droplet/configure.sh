@@ -97,6 +97,8 @@ rc-update add udev sysinit
 rc-update add udev-trigger sysinit
 rc-update add udev-settle sysinit
 rc-update del mdev sysinit 2>/dev/null || true
+# sysinit, so /proc is private before any daemon or login starts.
+rc-update add proc-hidepid sysinit
 
 step 'Clean up instance state'
 # The image must ship stateless; these are regenerated on first boot.
