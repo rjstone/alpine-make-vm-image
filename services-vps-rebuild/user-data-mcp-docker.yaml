@@ -1,7 +1,7 @@
 #cloud-config
 # Pin the docker group's GID rather than letting cloud-init pick the next free
 # one. The hub's mcp-docker container creates a group with this GID at image
-# build time (DOCKER_GID in mcp-vps caddy/compose.yml) so its non-root user can
+# build time (DOCKER_GID in services-vps caddy/compose.yml) so its non-root user can
 # read the bind-mounted socket. The two must agree.
 #
 # 1000, not 999: Alpine's own alpine-baselayout already uses GID 999 for the
@@ -101,4 +101,4 @@ runcmd:
     - |
         # The hub's mcp-docker image is built against this GID; if the two ever
         # drift, this line in the cloud-init log is where to look first.
-        echo "docker group GID: $(getent group docker | cut -d: -f3) (mcp-vps expects 1000)"
+        echo "docker group GID: $(getent group docker | cut -d: -f3) (services-vps expects 1000)"

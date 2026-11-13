@@ -41,7 +41,7 @@ step 'Configure sshd'
 # With UsePAM yes, PAM can still prompt for a password through
 # keyboard-interactive, bypassing PasswordAuthentication no (upstream's
 # sshd_config says as much), so turn KbdInteractiveAuthentication off too.
-# Lynis (SSH-7408) checks neither option, so the CI image test and mcp-vps
+# Lynis (SSH-7408) checks neither option, so the CI image test and services-vps
 # scripts/audit-host.sh check them instead.
 sed -Ei \
 	-e 's/^[# ]*(UsePAM).*/\1 yes/' \

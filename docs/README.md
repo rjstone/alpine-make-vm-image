@@ -11,7 +11,7 @@ and reviewable) or a plan document.
 | `do-droplet-plan.md` | — | implementation plan for reproducing the base do-droplet image build and ci verification (but not upload) |
 
 Rebuilding the `mcp.rjstone.net` MCP hub is documented separately, in
-[`../mcp-vps-rebuild/`](../mcp-vps-rebuild/mcp-vps-rebuild.md), alongside the
+[`../services-vps-rebuild/`](../services-vps-rebuild/services-vps-rebuild.md), alongside the
 cloud-init user data that provisions the host.
 
 ## Getting the image onto DigitalOcean

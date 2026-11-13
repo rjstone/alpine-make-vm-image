@@ -10,12 +10,12 @@ on:
       - do-droplet-image
       - do-droplet-image-test
       # Personal branch: do-droplet-image plus the owner's own user-data in
-      # mcp-vps-rebuild/. It uses the published image and never builds one
+      # services-vps-rebuild/. It uses the published image and never builds one
       # (ci.yml does not run here), so this check is its only CI.
       - do-droplet-agent-gateway-image
     paths:
       - "user-data-examples/**"
-      - "mcp-vps-rebuild/**"
+      - "services-vps-rebuild/**"
       - ".github/examples/**"
       - ".github/workflows/examples.yml"
   pull_request:
@@ -50,4 +50,4 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends opendoas python3-yaml
       - name: Check examples
-        run: python3 .github/examples/check-user-data.py user-data-examples/*.yaml mcp-vps-rebuild/*.yaml
+        run: python3 .github/examples/check-user-data.py user-data-examples/*.yaml services-vps-rebuild/*.yaml
