@@ -115,8 +115,27 @@ rules on the live host have not been confirmed.)*
 
 Once cloud-init has finished (`cloud-init status --wait`):
 
+`/opt` pulls from the private `services-vps` repository with a read-only GitHub
+**deploy key**, as root. A deploy key is an SSH key, so the remote must be the
+SSH form (`git@github.com:...`); with an `https://` remote, git never offers
+the key and prompts for a username and password instead. Restore the key from
+backup (or generate a new one and add it under the repository's Settings →
+Deploy keys), then point root's SSH config at it:
+
 ```sh
-git clone <services-vps remote> /opt        # or restore /opt from backup
+install -d -m 700 /root/.ssh
+install -m 600 <backed-up key> /root/.ssh/services-vps-deploy
+cat >> /root/.ssh/config <<'EOF'
+Host github.com
+  IdentityFile /root/.ssh/services-vps-deploy
+  IdentitiesOnly yes
+EOF
+chmod 600 /root/.ssh/config
+ssh -T git@github.com                  # expect a greeting naming rjstone/services-vps
+```
+
+```sh
+git clone git@github.com:rjstone/services-vps.git /opt   # or restore /opt from backup
 cd /opt/caddy
 # .env must be in place before this point or mcp-auth-proxy will not start
 docker compose build                   # agentgateway and mcp-docker build locally
